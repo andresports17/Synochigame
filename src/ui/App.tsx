@@ -57,6 +57,9 @@ export function App() {
           <span title="Tactic Tokens, earned in matches">
             <b className="mono">{profile.tokens}</b> Tactic Tokens
           </span>
+          <span title="Gold Boots, one per goal scored">
+            <b className="mono">{profile.boots ?? 0}</b> Gold Boots
+          </span>
           <span title="Mission Medals, earned in lessons and drills">
             <b className="mono">{profile.medals}</b> Medals
           </span>
@@ -88,10 +91,11 @@ export function App() {
             const gf = s.score.home;
             const ga = s.score.away;
             const res = gf > ga ? 'w' : gf === ga ? 'd' : 'l';
-            const earned = (res === 'w' ? MATCH_REWARDS.win : res === 'd' ? MATCH_REWARDS.draw : MATCH_REWARDS.loss) + gf * MATCH_REWARDS.perGoal;
+            const earned = MATCH_REWARDS.finish + (res === 'w' ? MATCH_REWARDS.win : res === 'd' ? MATCH_REWARDS.draw : 0);
             update((p) => ({
               ...p,
               tokens: p.tokens + earned,
+              boots: (p.boots ?? 0) + gf * MATCH_REWARDS.bootsPerGoal,
               record: { ...p.record, [res]: p.record[res] + 1, gf: p.record.gf + gf, ga: p.record.ga + ga },
             }));
             return earned;
@@ -170,7 +174,7 @@ function Home({ profile, go }: { profile: Profile; go: (s: Screen) => void }) {
       </section>
 
       <nav className="menu" aria-label="Main menu">
-        <MenuTile title="Play vs CPU" body="Rookie, Pro or Legend. Earn Tactic Tokens." onClick={() => go({ id: 'setup', local: false })} />
+        <MenuTile title="Play vs CPU" body="Beginner, Baller or Master. Earn Tactic Tokens." onClick={() => go({ id: 'setup', local: false })} />
         <MenuTile title="Local match" body="Two players, one device. Pass and play." onClick={() => go({ id: 'setup', local: true })} />
         <MenuTile title="Online" body="Invite a friend with a match code." onClick={() => go({ id: 'online' })} />
         <MenuTile title="Learn & practise" body={`${lessons.length} lessons and ${SCENARIOS.length - lessons.length} drills. Earn Medals.`} onClick={() => go({ id: 'learn' })} />
@@ -624,8 +628,8 @@ function RulesPage({ onBack }: { onBack: () => void }) {
         <li><b>Tackle</b> (1 action): a piece next to the ball carrier compares Tackle + 1 per teammate next to the carrier against the carrier's Control + 1 per teammate beside them. Higher wins; ties go to the carrier. Each piece can tackle once per turn.</li>
         <li><b>One-two</b> ({RULES.oneTwoCost} actions): pass to a teammate within {RULES.groundPassMax}, run, and receive the return pass. Both passes can be intercepted.</li>
       </ul>
-      <h3>Goalkeepers</h3>
-      <p>Keepers must stay inside their own penalty area (columns D–M, {RULES.boxDepth} rows deep).</p>
+      <h3>Box Keepers</h3>
+      <p>Box Keepers must stay inside their own penalty area (columns D–M, {RULES.boxDepth} rows deep).</p>
       <h3>Goals and restarts</h3>
       <p>After a goal both teams reset to their formations and the side that conceded kicks off. The second half is kicked off by the team that did not start the first.</p>
       <h3>No luck</h3>

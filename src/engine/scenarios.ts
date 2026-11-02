@@ -72,7 +72,7 @@ export const SCENARIOS: Scenario[] = [
     tips: [
       'Tap a blue piece to see where it can go.',
       'Pieces step like a chess king, up to their Move value, and walk around other pieces.',
-      'Wingers move 4, most players 3, centre-backs and DMs 2.',
+      'Flankers move 4, most players 3, Central Pillars and Anchors 2.',
     ],
     objective: 'Get any blue piece to row 14 or beyond.',
     maxTurns: 2,
@@ -84,8 +84,8 @@ export const SCENARIOS: Scenario[] = [
     id: 'l2-dribble',
     kind: 'lesson',
     title: '2 · Dribbling',
-    brief: 'The piece holding the ball can move with it. Dribbling costs 1 cell of range, so a forward with Move 3 dribbles 2.',
-    tips: ['Use Move on the ball carrier to dribble.', 'You will need two turns: plan your route.'],
+    brief: 'The piece holding the ball can move with it. Dribbling costs 1 cell of range, so you cover one cell less with the ball.',
+    tips: ['Use Move on the ball carrier to dribble. A Frontliner with Move 3 dribbles 2.', 'You will need two turns: plan your route.'],
     objective: 'Carry the ball to row 16 or beyond.',
     maxTurns: 2,
     opponent: 'pass',
@@ -99,7 +99,7 @@ export const SCENARIOS: Scenario[] = [
     brief:
       'Passes up to 4 cells travel along the ground. Any opponent standing on the line intercepts them. Before you pass, the preview tells you exactly what will happen.',
     tips: ['Select the carrier, choose Pass, then tap a teammate.', 'A pass to an empty cell leaves the ball loose there.'],
-    objective: 'Get the ball to your forward.',
+    objective: 'Get the ball to your Frontliner.',
     maxTurns: 1,
     opponent: 'pass',
     setup: () =>
@@ -116,8 +116,8 @@ export const SCENARIOS: Scenario[] = [
     title: '4 · Lofted passes',
     brief:
       'Passes longer than 4 cells are lofted. They fly over everyone, but any opponent next to the landing cell contests it: if their Tackle beats the receiver\'s Control, they win the ball.',
-    tips: ['Find a receiver with no strong defender beside them.', 'Midfielders have the longest passing range (8).'],
-    objective: 'Get the ball to a winger with one pass.',
+    tips: ['Find a receiver with no strong defender beside them.', 'Connectors have the longest passing range (8).'],
+    objective: 'Get the ball to a Flanker with one pass.',
     maxTurns: 1,
     opponent: 'pass',
     setup: () =>
@@ -141,7 +141,7 @@ export const SCENARIOS: Scenario[] = [
     brief:
       'Shots are aimed at one of the four goal-mouth cells (G–J). Shot power drops with distance, and the keeper only covers cells within 2 of where they stand, getting weaker the further they reach.',
     tips: [
-      'Forwards shoot hardest (6). Get within 4 cells.',
+      'Frontliners shoot hardest (6). Get within 4 cells.',
       'Aim for the corner furthest from the keeper.',
       'The preview shows GOAL, SAVED or BLOCKED before you commit.',
     ],
@@ -158,7 +158,7 @@ export const SCENARIOS: Scenario[] = [
     title: '6 · Tackling with support',
     brief:
       'A piece next to the ball carrier can tackle: its Tackle plus 1 for every teammate next to the carrier, against the carrier\'s Control plus 1 for each of their teammates beside them. Higher number wins; a tie goes to the carrier.',
-    tips: ['A lone DM (5) cannot beat a forward (5).', 'Bring a second piece alongside first, then tackle.'],
+    tips: ['A lone Anchor (5) cannot beat a Frontliner (5).', 'Bring a second piece alongside first, then tackle.'],
     objective: 'Win the ball back.',
     maxTurns: 1,
     opponent: 'pass',
@@ -172,7 +172,7 @@ export const SCENARIOS: Scenario[] = [
     brief:
       'A one-two uses 2 actions: pass to a nearby teammate, run, and receive the return pass. Both passes can still be intercepted.',
     tips: ['Select the carrier, choose One-Two, pick the teammate, then pick where to run.'],
-    objective: 'Get past the centre-back with the ball at row 18 or beyond.',
+    objective: 'Get past the Central Pillars with the ball at row 18 or beyond.',
     maxTurns: 1,
     opponent: 'pass',
     setup: () =>

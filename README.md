@@ -18,7 +18,7 @@ npm run build:demo  # single-file web demo: dist-single/synochi-web-demo.html
 | Area | Status in v0.1 |
 |---|---|
 | Rules engine (move, dribble, ground and lofted passes, shots, keeper saves, supported tackles, one-twos, halves, kickoffs) | Done. Deterministic, fully tested |
-| CPU opponent: Rookie, Pro, Legend | Done. Beam search over whole turns |
+| CPU opponent: Beginner, Baller, Master | Done. Beam search over whole turns |
 | Play vs CPU, local two-player | Done |
 | Online invite-code matches, server-authoritative | Done (in-memory server) |
 | Match verification by replaying the action log (`POST /api/verify`) | Done |
@@ -44,7 +44,9 @@ tests/           Vitest suites for the engine and the server
 
 The engine has no randomness and treats state as immutable. The same setup plus the same action list always gives the same match. That is what lets the server validate online moves and verify rewards before granting them.
 
-## Important: provisional rules
+## Important: this is not the prototype
+
+David André's Replit prototype (documented in the Development Brief, Oct 2026) is the more complete game and should be the launch base. This repository is an independent v0.1 rebuild written before the brief was available. Role names, CPU levels and match rewards match the brief, but the rules differ in several ways (one action per turn, real-time clock, offside, rebounds, role-specific movement). See section 3 of [docs/LAUNCH_PLAN.md](docs/LAUNCH_PLAN.md).
 
 This build was written without access to the original SYNOCHÍ Replit project or the official rulebook. The rules here are a complete, playable placeholder set. When the official Rules tab is available:
 

@@ -35,14 +35,15 @@ export const ROLE_STATS: Record<Role, RoleStats> = {
 };
 
 export const ROLE_NAMES: Record<Role, string> = {
-  GK: 'Goalkeeper',
-  CB: 'Centre-Back',
-  FB: 'Full-Back',
-  DM: 'Defensive Mid',
-  MF: 'Midfielder',
-  AM: 'Attacking Mid',
-  WG: 'Winger',
-  FW: 'Forward',
+  // Role names as used in the creator's prototype (Development Brief, Oct 2026).
+  GK: 'Box Keeper',
+  CB: 'Central Pillar',
+  FB: 'Defensive Flanker',
+  DM: 'Anchor',
+  MF: 'Connector',
+  AM: 'Sparker',
+  WG: 'Flanker',
+  FW: 'Frontliner',
 };
 
 export const RULES = {

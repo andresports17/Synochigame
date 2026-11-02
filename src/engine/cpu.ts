@@ -17,9 +17,9 @@ import type { Action, Cell, GameState, Piece, Side } from './types';
 export type Difficulty = 'rookie' | 'pro' | 'legend';
 
 export const DIFFICULTIES: Record<Difficulty, { label: string; beam: number; lookahead: boolean; blurb: string }> = {
-  rookie: { label: 'Rookie', beam: 1, lookahead: false, blurb: 'Plays one action at a time. Good for learning.' },
-  pro: { label: 'Pro', beam: 4, lookahead: true, blurb: 'Plans whole turns and protects the ball.' },
-  legend: { label: 'Legend', beam: 10, lookahead: true, blurb: 'Searches deeply and punishes loose play.' },
+  rookie: { label: 'Beginner', beam: 1, lookahead: false, blurb: 'Plays one action at a time. Good for learning.' },
+  pro: { label: 'Baller', beam: 4, lookahead: true, blurb: 'Plans whole turns and protects the ball.' },
+  legend: { label: 'Master', beam: 10, lookahead: true, blurb: 'Searches deeply and punishes loose play.' },
 };
 
 /** Every action worth considering for the side to move. */

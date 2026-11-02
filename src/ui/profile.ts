@@ -8,6 +8,7 @@ import { useCallback, useState } from 'react';
 export interface Profile {
   tokens: number; // Tactic Tokens — earned by playing matches
   medals: number; // Mission Medals — earned from lessons and drills
+  boots: number; // Gold Boots — one per goal scored
   completed: string[]; // scenario ids
   owned: string[]; // cosmetic ids
   boardTheme: string;
@@ -22,6 +23,7 @@ const KEY = 'synochi.profile.v1';
 const DEFAULT: Profile = {
   tokens: 0,
   medals: 0,
+  boots: 0,
   completed: [],
   owned: ['classic', 'royal', 'crimson'],
   boardTheme: 'classic',
@@ -57,6 +59,7 @@ export function useProfile() {
   return [profile, update] as const;
 }
 
-export const MATCH_REWARDS = { win: 100, draw: 50, loss: 25, perGoal: 10 };
+// Values from the prototype's economy (Development Brief): 40 for finishing, +80 win, +30 draw; one Gold Boot per goal.
+export const MATCH_REWARDS = { finish: 40, win: 80, draw: 30, bootsPerGoal: 1 };
 export const MEDALS_PER_SCENARIO = 1;
 export const TOKENS_PER_SCENARIO = 20;
