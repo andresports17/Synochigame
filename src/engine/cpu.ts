@@ -5,6 +5,7 @@ import {
   moveTargets,
   oneTwoPartners,
   oneTwoTargets,
+  passTargets,
   pieceAt,
   resolveAction,
   shotOutcome,
@@ -24,7 +25,7 @@ export const DIFFICULTIES: Record<Difficulty, { label: string; beam: number; loo
 
 /** Every action worth considering for the side to move. */
 export function candidateActions(s: GameState): Action[] {
-  const out: Action[] = [{ type: 'endTurn' }];
+  const out: Action[] = validateAction(s, { type: 'endTurn' }) ? [] : [{ type: 'endTurn' }];
   if (s.phase !== 'playing') return out;
   const side = s.turn;
   const carrier = carrierOf(s);
@@ -52,6 +53,14 @@ export function candidateActions(s: GameState): Action[] {
         if (onBoard(ahead) && !pieceAt(s, ahead)) addPass(ahead);
       }
     }
+    // Laws Mode: clearing into touch is a legitimate way out of trouble.
+    if (s.mode === 'laws')
+      for (const c of [-1, RULES.cols])
+        for (let dr = -2; dr <= 2; dr++) {
+          const to = { c, r: carrier.pos.r + dr * dir };
+          const a: Action = { type: 'pass', pieceId: carrier.id, to };
+          if (!validateAction(s, a)) out.push(a);
+        }
     for (const t of goalTargets(side)) {
       const a: Action = { type: 'shoot', pieceId: carrier.id, target: t };
       if (!validateAction(s, a)) out.push(a);
@@ -62,7 +71,11 @@ export function candidateActions(s: GameState): Action[] {
           out.push({ type: 'oneTwo', pieceId: carrier.id, viaId: via.id, to });
   }
 
-  if (carrier && carrier.side !== side)
+  // A pending restart must be taken: make sure at least one way to take it is on the list.
+  if (s.restart && s.restart.side === side && carrier && !out.some((a) => a.type === 'pass' || a.type === 'shoot'))
+    for (const to of passTargets(s, carrier.id)) out.push({ type: 'pass', pieceId: carrier.id, to });
+
+  if (carrier && carrier.side !== side && !s.restart)
     for (const p of mine)
       if (!p.tackled && dist(p.pos, carrier.pos) === 1) out.push({ type: 'tackle', pieceId: p.id, targetId: carrier.id });
 
@@ -179,7 +192,7 @@ export function planTurn(s: GameState, difficulty: Difficulty = 'pro'): Action[]
   if (!last || last.type !== 'endTurn') {
     let st = s;
     for (const a of plan) st = resolveAction(st, a);
-    if (st.turn === side && st.phase === 'playing' && st.turnsPlayed === s.turnsPlayed && st.half === s.half)
+    if (st.turn === side && st.phase === 'playing' && st.turnsPlayed === s.turnsPlayed && st.half === s.half && !validateAction(st, { type: 'endTurn' }))
       plan.push({ type: 'endTurn' });
   }
   return plan;

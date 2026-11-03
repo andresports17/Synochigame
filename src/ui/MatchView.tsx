@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  LAW_NAMES,
+  RESTART_NAMES,
   ROLE_NAMES,
   ROLE_STATS,
   RULES,
@@ -9,6 +11,9 @@ import {
   getPiece,
   matchMinute,
   moveTargets,
+  offsideLine,
+  offsidePositions,
+  onBoard,
   oneTwoPartners,
   oneTwoTargets,
   passTargets,
@@ -23,6 +28,7 @@ import {
   type Difficulty,
   type GameEvent,
   type GameState,
+  type RestartType,
   type Side,
 } from '../engine';
 import { Board, type Overlay } from './Board';
@@ -92,6 +98,19 @@ const EVENT_TONE: Partial<Record<GameEvent['kind'], string>> = {
   halftime: 'info',
   fulltime: 'info',
   kickoff: 'info',
+  offside: 'bad',
+  out: 'info',
+  restart: 'info',
+  encroach: 'info',
+  parry: 'warn',
+  deflect: 'warn',
+};
+
+export const RESTART_HELP: Record<RestartType, string> = {
+  throwIn: 'Taken from where the ball crossed the touchline. Up to 4 squares. No offside, and no goal directly from a throw-in.',
+  goalKick: 'Taken by the keeper from the goal area. Opponents stay outside the penalty area until it is taken. No offside.',
+  corner: 'Taken from the corner square. Opponents stay 2 squares (9.15 m) away. No offside, and a goal can be scored directly.',
+  indirectFreeKick: 'Taken where the offence happened. Opponents stay 2 squares away. The ball must touch another player before a goal counts.',
 };
 
 interface ViewProps {
@@ -125,6 +144,15 @@ export function MatchView({ state, onAction, humanSides, busy, theme, kits, bann
     }
   }, [state, selPiece, myTurn]);
 
+  // A pending restart: hand the human the taker, ready to play the ball.
+  const rs = state.restart;
+  useEffect(() => {
+    if (myTurn && rs && rs.side === state.turn && !sel) {
+      setSel(rs.takerId);
+      setMode('pass');
+    }
+  }, [myTurn, rs, state.turn, sel]);
+
   const avail = useMemo(() => {
     if (!selPiece || !myTurn) return null;
     return {
@@ -141,13 +169,17 @@ export function MatchView({ state, onAction, humanSides, busy, theme, kits, bann
     [state, selPiece, via, mode],
   );
 
+  // Laws Mode teaching aid: show the offside line while choosing a pass (not from throw-ins, goal kicks or corners).
+  const exemptRestart = !!rs && rs.type !== 'indirectFreeKick' && rs.side === state.turn;
+  const showOffside = state.mode === 'laws' && mode === 'pass' && !!selPiece && state.ball.carrier === selPiece.id && !exemptRestart;
+
   const overlays: Overlay[] = [];
   if (avail && selPiece) {
     if (mode === 'move') avail.move.forEach((cell) => overlays.push({ cell, kind: 'move' }));
     if (mode === 'pass')
       avail.pass.forEach((cell) => {
         const p = pieceAt(state, cell);
-        overlays.push({ cell, kind: p ? 'pass' : 'space' });
+        overlays.push({ cell, kind: !onBoard(cell) ? 'out' : p ? 'pass' : 'space' });
       });
     if (mode === 'shoot') avail.shoot.forEach((cell) => overlays.push({ cell, kind: 'shot' }));
     if (mode === 'tackle') avail.tackle.forEach((cell) => overlays.push({ cell, kind: 'tackle' }));
@@ -251,7 +283,18 @@ export function MatchView({ state, onAction, humanSides, busy, theme, kits, bann
 
       <div className="match-body">
         <div className="board-wrap">
-          <Board state={state} theme={theme} kits={kits} selected={sel} overlays={overlays} onCell={onCell} onHover={setHover} />
+          <Board
+            state={state}
+            theme={theme}
+            kits={kits}
+            selected={sel}
+            overlays={overlays}
+            onCell={onCell}
+            onHover={setHover}
+            offside={showOffside && selPiece ? { side: selPiece.side, line: offsideLine(state, selPiece.side) } : null}
+            flagged={showOffside && selPiece ? offsidePositions(state, selPiece).map((p) => p.id) : []}
+            restartSpot={rs?.spot ?? null}
+          />
         </div>
 
         <aside className="panel">
@@ -275,6 +318,16 @@ export function MatchView({ state, onAction, humanSides, busy, theme, kits, bann
             )}
           </div>
           {statusNote && <p className="note">{statusNote}</p>}
+          {rs && state.phase === 'playing' && (
+            <div className="callout">
+              <div className="eyebrow">{LAW_NAMES[rs.type]}</div>
+              <strong>
+                {RESTART_NAMES[rs.type]} to {TEAM_NAMES[rs.side]}
+              </strong>
+              <p>{RESTART_HELP[rs.type]}</p>
+              {rs.side !== state.turn && <p className="hint">{TEAM_NAMES[state.turn]} can reposition first. The ball is out of play until the kick is taken, so no tackles.</p>}
+            </div>
+          )}
 
           {myTurn && !selPiece && <p className="hint">Select one of your pieces. You have {state.actionsLeft} action{state.actionsLeft === 1 ? '' : 's'} left.</p>}
 
@@ -320,7 +373,10 @@ export function MatchView({ state, onAction, humanSides, busy, theme, kits, bann
             <div className="preview">
               <div className="eyebrow">{pending ? 'Confirm action' : 'Preview'}</div>
               {preview.length === 0 ? <p>No effect.</p> : preview.filter((e) => e.kind !== 'kickoff').slice(0, 3).map((e, i) => (
-                <p key={i} className={`ev ${EVENT_TONE[e.kind] ?? ''}`}>{e.text}</p>
+                <p key={i} className={`ev ${EVENT_TONE[e.kind] ?? ''}`}>
+                  {e.text}
+                  {e.law && <span className="law">{e.law}</span>}
+                </p>
               ))}
               {pending && (
                 <div className="row">
@@ -345,7 +401,10 @@ export function MatchView({ state, onAction, humanSides, busy, theme, kits, bann
               {recent.map((e, i) => (
                 <li key={state.events.length - i} className={`ev ${EVENT_TONE[e.kind] ?? ''}`}>
                   <span className={`dot ${e.side}`} style={{ background: kits[e.side].fill }} />
-                  {e.text}
+                  <span>
+                    {e.text}
+                    {e.law && <span className="law">{e.law}</span>}
+                  </span>
                 </li>
               ))}
             </ol>
@@ -376,7 +435,7 @@ function modeHint(m: Mode, via: boolean) {
     case 'move':
       return 'Tap a white dot to move. The ball carrier dribbles 1 cell less.';
     case 'pass':
-      return 'Tap a teammate (ring) or open space (square). Passes over 4 cells are lofted.';
+      return 'Tap a teammate (ring) or open space (square). Passes over 4 cells are lofted. In Laws Mode, orange diamonds put the ball out of play.';
     case 'shoot':
       return 'Tap a gold goal-mouth cell to aim your shot.';
     case 'tackle':

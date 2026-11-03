@@ -1,11 +1,11 @@
 import { RULES } from './config';
 import { COL_LETTERS } from './geometry';
 import type { Difficulty } from './cpu';
-import type { Cell, GameState, Piece, Role, Side } from './types';
+import type { Cell, GameState, Piece, RestartType, Role, RuleMode, Side } from './types';
 
 export interface Scenario {
   id: string;
-  kind: 'lesson' | 'drill';
+  kind: 'lesson' | 'law' | 'drill';
   title: string;
   brief: string;
   tips: string[];
@@ -29,9 +29,16 @@ export function parseCell(name: string): Cell {
   return { c, r };
 }
 
-type Spec = [Side, Role, string];
+export type Spec = [Side, Role, string];
 
-function position(specs: Spec[], ballWith: number | string, turn: Side = 'home'): GameState {
+export interface PositionOptions {
+  mode?: RuleMode;
+  /** Start with a restart pending, taken by the piece holding the ball. */
+  restart?: RestartType;
+}
+
+/** Build a custom position. `ballWith` is a piece index (that piece holds the ball) or a cell name (loose ball). */
+export function buildPosition(specs: Spec[], ballWith: number | string, turn: Side = 'home', opts: PositionOptions = {}): GameState {
   const counters: Record<Side, number> = { home: 0, away: 0 };
   const pieces: Piece[] = specs.map(([side, role, at]) => ({
     id: `${side === 'home' ? 'H' : 'A'}${counters[side]++}`,
@@ -43,6 +50,9 @@ function position(specs: Spec[], ballWith: number | string, turn: Side = 'home')
   }));
   const carrier = typeof ballWith === 'number' ? pieces[ballWith] : undefined;
   return {
+    mode: opts.mode ?? 'quick',
+    restart: opts.restart && carrier ? { type: opts.restart, side: carrier.side, spot: { ...carrier.pos }, takerId: carrier.id } : null,
+    offsideWatch: null,
     pieces,
     ball: carrier ? { pos: { ...carrier.pos }, carrier: carrier.id } : { pos: parseCell(ballWith as string), carrier: null },
     turn,
@@ -77,7 +87,7 @@ export const SCENARIOS: Scenario[] = [
     objective: 'Get any blue piece to row 14 or beyond.',
     maxTurns: 2,
     opponent: 'pass',
-    setup: () => position([['home', 'WG', 'C10'], ['home', 'MF', 'H9'], ['away', 'CB', 'H15']], 'A1', 'home'),
+    setup: () => buildPosition([['home', 'WG', 'C10'], ['home', 'MF', 'H9'], ['away', 'CB', 'H15']], 'A1', 'home'),
     success: (s) => s.pieces.some((p) => p.side === 'home' && p.pos.r >= 13),
   },
   {
@@ -89,7 +99,7 @@ export const SCENARIOS: Scenario[] = [
     objective: 'Carry the ball to row 16 or beyond.',
     maxTurns: 2,
     opponent: 'pass',
-    setup: () => position([['home', 'FW', 'H12'], ['away', 'DM', 'H15']], 0),
+    setup: () => buildPosition([['home', 'FW', 'H12'], ['away', 'DM', 'H15']], 0),
     success: (s) => homeHas(s) && s.ball.pos.r >= 15,
   },
   {
@@ -103,7 +113,7 @@ export const SCENARIOS: Scenario[] = [
     maxTurns: 1,
     opponent: 'pass',
     setup: () =>
-      position(
+      buildPosition(
         [['home', 'MF', 'E10'], ['home', 'AM', 'H11'], ['home', 'FW', 'I14'], ['away', 'CB', 'G12']],
         0,
       ),
@@ -121,7 +131,7 @@ export const SCENARIOS: Scenario[] = [
     maxTurns: 1,
     opponent: 'pass',
     setup: () =>
-      position(
+      buildPosition(
         [
           ['home', 'MF', 'H8'],
           ['home', 'WG', 'C14'],
@@ -148,7 +158,7 @@ export const SCENARIOS: Scenario[] = [
     objective: 'Score a goal.',
     maxTurns: 2,
     opponent: 'pass',
-    setup: () => position([['home', 'FW', 'H19'], ['away', 'GK', 'H24'], ['away', 'CB', 'F22']], 0),
+    setup: () => buildPosition([['home', 'FW', 'H19'], ['away', 'GK', 'H24'], ['away', 'CB', 'F22']], 0),
     success: (s) => s.score.home > 0,
     fail: lostBall,
   },
@@ -162,7 +172,7 @@ export const SCENARIOS: Scenario[] = [
     objective: 'Win the ball back.',
     maxTurns: 1,
     opponent: 'pass',
-    setup: () => position([['home', 'DM', 'H13'], ['home', 'MF', 'K13'], ['away', 'FW', 'H14']], 2),
+    setup: () => buildPosition([['home', 'DM', 'H13'], ['home', 'MF', 'K13'], ['away', 'FW', 'H14']], 2),
     success: (s) => homeHas(s),
   },
   {
@@ -176,8 +186,125 @@ export const SCENARIOS: Scenario[] = [
     maxTurns: 1,
     opponent: 'pass',
     setup: () =>
-      position([['home', 'AM', 'H15'], ['home', 'WG', 'J16'], ['away', 'CB', 'H17'], ['away', 'CB', 'F17']], 0),
+      buildPosition([['home', 'AM', 'H15'], ['home', 'WG', 'J16'], ['away', 'CB', 'H17'], ['away', 'CB', 'F17']], 0),
     success: (s) => homeHas(s) && s.ball.pos.r >= 17,
+    fail: lostBall,
+  },
+  // ---------------------------------------------------------------- Laws of the Game lessons
+  {
+    id: 'law-offside-level',
+    kind: 'law',
+    title: 'Law 11 · Level is onside',
+    brief:
+      'An attacker is in an offside position if, when a teammate passes, they are in the opponent\'s half and nearer the goal line than both the ball and the second-last defender. Being level with that defender is onside. The dashed line shows where offside starts.',
+    tips: [
+      'Your Frontliner is one row beyond the defenders: a pass now is offside.',
+      'Move the Frontliner back level with the defenders first, then pass.',
+      'Offside is judged at the moment the pass is played.',
+    ],
+    objective: 'Get the ball to your Frontliner without being caught offside.',
+    maxTurns: 1,
+    opponent: 'pass',
+    setup: () =>
+      buildPosition(
+        [
+          ['home', 'AM', 'H14'],
+          ['home', 'FW', 'H20'],
+          ['away', 'GK', 'H24'],
+          ['away', 'CB', 'F19'],
+          ['away', 'CB', 'K19'],
+        ],
+        0,
+        'home',
+        { mode: 'laws' },
+      ),
+    success: (s) => homeHas(s, 'H1'),
+    fail: lostBall,
+  },
+  {
+    id: 'law-offside-run',
+    kind: 'law',
+    title: 'Law 11 · Timing the run',
+    brief:
+      'Offside only looks at where players stand when the ball is played. A forward who is level or behind at that moment can run past the defenders afterwards and collect the ball legally.',
+    tips: [
+      'Pass into the space behind the defenders first.',
+      'Then run your Frontliner onto the loose ball.',
+      'Run first and pass second, and you will be flagged offside.',
+    ],
+    objective: 'Your Frontliner collects the ball at row 20 or beyond.',
+    maxTurns: 1,
+    opponent: 'pass',
+    setup: () =>
+      buildPosition(
+        [
+          ['home', 'MF', 'H12'],
+          ['home', 'FW', 'J17'],
+          ['away', 'GK', 'H24'],
+          ['away', 'CB', 'G18'],
+          ['away', 'CB', 'K18'],
+        ],
+        0,
+        'home',
+        { mode: 'laws' },
+      ),
+    success: (s) => homeHas(s, 'H1') && s.ball.pos.r >= 19,
+    fail: lostBall,
+  },
+  {
+    id: 'law-throw-in',
+    kind: 'law',
+    title: 'Law 15 · The throw-in',
+    brief:
+      'When the whole ball crosses a touchline, the team that did not touch it last takes a throw-in from that spot. A throw-in travels at most 4 squares, you cannot score directly from one, and there is no offside from a throw-in.',
+    tips: [
+      'Your Frontliner is beyond the defenders, but that does not matter from a throw-in.',
+      'Shoot is greyed out: you cannot score directly from a throw-in.',
+    ],
+    objective: 'Take the throw-in to your Frontliner.',
+    maxTurns: 1,
+    opponent: 'pass',
+    setup: () =>
+      buildPosition(
+        [
+          ['home', 'WG', 'A16'],
+          ['home', 'FW', 'C19'],
+          ['home', 'MF', 'E13'],
+          ['away', 'GK', 'H24'],
+          ['away', 'CB', 'E17'],
+          ['away', 'CB', 'G18'],
+        ],
+        0,
+        'home',
+        { mode: 'laws', restart: 'throwIn' },
+      ),
+    success: (s) => homeHas(s, 'H1'),
+    fail: lostBall,
+  },
+  {
+    id: 'law-corner',
+    kind: 'law',
+    title: 'Law 17 · The corner kick',
+    brief:
+      'When defenders put the ball over their own goal line, the attackers take a corner from the corner square. Opponents must stay 2 squares (9.15 m) away until it is taken, and there is no offside from a corner.',
+    tips: ['Deliver the corner to your Frontliner, then shoot for the far post.', 'A lofted ball is contested where it lands.'],
+    objective: 'Score from the corner.',
+    maxTurns: 1,
+    opponent: 'pass',
+    setup: () =>
+      buildPosition(
+        [
+          ['home', 'WG', 'P24'],
+          ['home', 'FW', 'J21'],
+          ['away', 'GK', 'H24'],
+          ['away', 'CB', 'G21'],
+          ['away', 'CB', 'K22'],
+        ],
+        0,
+        'home',
+        { mode: 'laws', restart: 'corner' },
+      ),
+    success: (s) => s.score.home > 0,
     fail: lostBall,
   },
   {
@@ -190,7 +317,7 @@ export const SCENARIOS: Scenario[] = [
     maxTurns: 3,
     opponent: 'pro',
     setup: () =>
-      position(
+      buildPosition(
         [
           ['home', 'AM', 'H16'],
           ['home', 'FW', 'F18'],
@@ -214,7 +341,7 @@ export const SCENARIOS: Scenario[] = [
     maxTurns: 4,
     opponent: 'pro',
     setup: () =>
-      position(
+      buildPosition(
         [
           ['home', 'GK', 'H1'],
           ['home', 'CB', 'E3'],
@@ -241,7 +368,7 @@ export const SCENARIOS: Scenario[] = [
     opponent: 'pro',
     winOnTimeout: true,
     setup: () =>
-      position(
+      buildPosition(
         [
           ['home', 'GK', 'H1'],
           ['home', 'CB', 'G4'],

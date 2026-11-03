@@ -306,3 +306,16 @@ button, input, select { font: inherit; color: inherit; }
   .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .modes { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
+
+.callout { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid #ffd400; border-radius: 10px; padding: 10px 14px; display: flex; flex-direction: column; gap: 4px; }
+.callout p { margin: 0; font-size: 14px; }
+.callout strong { font: 800 20px/1.1 var(--font-display); text-transform: uppercase; }
+.law { display: inline-block; margin-left: 6px; font: 600 10px/1.6 var(--font-mono); letter-spacing: 0.02em; color: var(--gold); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; white-space: nowrap; }
+
+.quiz-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.quiz-options .btn { text-align: left; }
+.quiz-options .btn:disabled { opacity: 1; cursor: default; }
+.quiz-options .btn.right { background: var(--good); color: var(--bg); border-color: transparent; }
+.quiz-options .btn.wrong { background: var(--bad); color: var(--bg); border-color: transparent; }
+.result .explain { color: var(--text); font-weight: 400; }
+.list-item.feature { border-color: var(--gold); }

@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { COL_LETTERS, RULES, type Cell, type GameState, type Piece } from '../engine';
+import { COL_LETTERS, RULES, type Cell, type GameState, type Piece, type Side } from '../engine';
 import type { BoardTheme, Kit } from './themes';
 
 export const CELL = 30;
@@ -10,7 +10,7 @@ export const OY = LABEL + GOAL;
 export const BOARD_W = RULES.cols * CELL + LABEL * 2;
 export const BOARD_H = RULES.rows * CELL + (LABEL + GOAL) * 2;
 
-export type OverlayKind = 'move' | 'pass' | 'space' | 'shot' | 'tackle' | 'via' | 'run' | 'pending';
+export type OverlayKind = 'move' | 'pass' | 'space' | 'shot' | 'tackle' | 'via' | 'run' | 'pending' | 'out';
 export interface Overlay {
   cell: Cell;
   kind: OverlayKind;
@@ -28,6 +28,21 @@ interface Props {
   onCell?: (c: Cell) => void;
   onHover?: (c: Cell | null) => void;
   compact?: boolean;
+  /** Laws Mode: draw the offside line for the attacking side (a progress value from offsideLine). */
+  offside?: { side: Side; line: number } | null;
+  /** Pieces to flag as standing in an offside position. */
+  flagged?: string[];
+  /** Arrow for a pass or shot (quiz and previews). */
+  arrow?: { from: Cell; to: Cell } | null;
+  /** Spot of a pending restart. */
+  restartSpot?: Cell | null;
+}
+
+/** Centre of a cell in board units, including the out-of-play ring around the pitch. */
+function point(c: Cell) {
+  const x = c.c < 0 ? OX / 2 : c.c >= RULES.cols ? BOARD_W - OX / 2 : cx(c.c);
+  const y = c.r < 0 ? OY - GOAL / 2 + 1 : c.r >= RULES.rows ? OY + RULES.rows * CELL + GOAL / 2 - 1 : cy(c.r);
+  return { x, y };
 }
 
 function Pitch({ theme }: { theme: BoardTheme }) {
@@ -98,7 +113,7 @@ function Pitch({ theme }: { theme: BoardTheme }) {
 
 const MemoPitch = memo(Pitch);
 
-function PieceToken({ p, kit, selected, hasBall, compact }: { p: Piece; kit: Kit; selected: boolean; hasBall: boolean; compact?: boolean }) {
+function PieceToken({ p, kit, selected, hasBall, compact, flagged }: { p: Piece; kit: Kit; selected: boolean; hasBall: boolean; compact?: boolean; flagged?: boolean }) {
   const spent = p.moved;
   return (
     <g className="piece" style={{ transform: `translate(${cx(p.pos.c)}px, ${cy(p.pos.r)}px)` }}>
@@ -112,6 +127,12 @@ function PieceToken({ p, kit, selected, hasBall, compact }: { p: Piece; kit: Kit
         </text>
       )}
       {hasBall && <Ball x={9} y={9} />}
+      {flagged && (
+        <g transform="translate(-13,-16)">
+          <line x1={0} y1={0} x2={0} y2={12} stroke="#fff" strokeWidth={1.5} />
+          <path d="M0 0 h9 l-2 3 l2 3 h-9 z" fill="#ffd400" stroke="#111" strokeWidth={0.6} />
+        </g>
+      )}
     </g>
   );
 }
@@ -126,9 +147,10 @@ function Ball({ x, y }: { x: number; y: number }) {
 }
 
 function OverlayMark({ o }: { o: Overlay }) {
-  const x = cx(o.cell.c);
-  const y = o.cell.r < 0 ? OY - GOAL / 2 + 1 : o.cell.r >= RULES.rows ? OY + RULES.rows * CELL + GOAL / 2 - 1 : cy(o.cell.r);
+  const { x, y } = point(o.cell);
   switch (o.kind) {
+    case 'out':
+      return <rect x={x - 5} y={y - 5} width={10} height={10} transform={`rotate(45 ${x} ${y})`} fill="#ff9a3c" stroke="#3a1a00" strokeWidth={1} />;
     case 'move':
     case 'run':
       return <circle cx={x} cy={y} r={5} fill={o.kind === 'run' ? 'var(--gold)' : 'rgba(255,255,255,.78)'} />;
@@ -146,7 +168,7 @@ function OverlayMark({ o }: { o: Overlay }) {
   }
 }
 
-export function Board({ state, theme, kits, selected, overlays = [], onCell, onHover, compact }: Props) {
+export function Board({ state, theme, kits, selected, overlays = [], onCell, onHover, compact, offside, flagged = [], arrow, restartSpot }: Props) {
   const toCell = (e: React.MouseEvent<SVGSVGElement>): Cell | null => {
     const svg = e.currentTarget;
     const pt = svg.createSVGPoint();
@@ -155,10 +177,10 @@ export function Board({ state, theme, kits, selected, overlays = [], onCell, onH
     const m = svg.getScreenCTM();
     if (!m) return null;
     const p = pt.matrixTransform(m.inverse());
-    const c = Math.floor((p.x - OX) / CELL);
-    if (c < 0 || c >= RULES.cols) return null;
-    if (p.y < OY && p.y >= OY - GOAL) return { c, r: -1 };
-    if (p.y >= OY + RULES.rows * CELL && p.y < OY + RULES.rows * CELL + GOAL) return { c, r: RULES.rows };
+    if (p.x < 0 || p.x > BOARD_W) return null;
+    const c = p.x < OX ? -1 : p.x >= OX + RULES.cols * CELL ? RULES.cols : Math.floor((p.x - OX) / CELL);
+    if (p.y < OY && p.y >= OY - GOAL) return c < 0 || c >= RULES.cols ? null : { c, r: -1 };
+    if (p.y >= OY + RULES.rows * CELL && p.y < OY + RULES.rows * CELL + GOAL) return c < 0 || c >= RULES.cols ? null : { c, r: RULES.rows };
     const r = Math.floor((p.y - OY) / CELL);
     if (r < 0 || r >= RULES.rows) return null;
     return { c, r };
@@ -186,9 +208,22 @@ export function Board({ state, theme, kits, selected, overlays = [], onCell, onH
         </radialGradient>
       </defs>
       <MemoPitch theme={theme} />
+      {offside && (() => {
+        const y = offside.side === 'home' ? OY + (offside.line + 1) * CELL : OY + (RULES.rows - 1 - offside.line) * CELL;
+        return (
+          <g>
+            <line x1={OX} y1={y} x2={OX + RULES.cols * CELL} y2={y} stroke="#ffd400" strokeWidth={2.5} strokeDasharray="8 5" />
+            <text x={OX + RULES.cols * CELL - 4} y={y + (offside.side === 'home' ? 11 : -5)} fill="#ffd400" fontSize={9} fontWeight={700} textAnchor="end" fontFamily="var(--font-body)">OFFSIDE LINE</text>
+          </g>
+        );
+      })()}
+      {restartSpot && (() => {
+        const { x, y } = point(restartSpot);
+        return <circle cx={x} cy={y} r={17} fill="none" stroke="#ffd400" strokeWidth={2} strokeDasharray="3 3" />;
+      })()}
       {overlays.filter((o) => o.kind !== 'pending' && o.kind !== 'tackle' && o.kind !== 'pass' && o.kind !== 'via').map((o, i) => <OverlayMark key={`u${i}`} o={o} />)}
       {state.pieces.map((p) => (
-        <PieceToken key={p.id} p={p} kit={kits[p.side]} selected={p.id === selected} hasBall={state.ball.carrier === p.id} compact={compact} />
+        <PieceToken key={p.id} p={p} kit={kits[p.side]} selected={p.id === selected} hasBall={state.ball.carrier === p.id} compact={compact} flagged={flagged.includes(p.id)} />
       ))}
       {loose && (
         <g className="piece" style={{ transform: `translate(${cx(state.ball.pos.c)}px, ${cy(state.ball.pos.r)}px)` }}>
@@ -196,6 +231,21 @@ export function Board({ state, theme, kits, selected, overlays = [], onCell, onH
         </g>
       )}
       {overlays.filter((o) => o.kind === 'pending' || o.kind === 'tackle' || o.kind === 'pass' || o.kind === 'via').map((o, i) => <OverlayMark key={`o${i}`} o={o} />)}
+      {arrow && (() => {
+        const a = point(arrow.from);
+        const b = point(arrow.to);
+        const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+        const ux = (b.x - a.x) / len;
+        const uy = (b.y - a.y) / len;
+        const ex = b.x - ux * 8;
+        const ey = b.y - uy * 8;
+        return (
+          <g stroke="#ffd400" fill="#ffd400">
+            <line x1={a.x + ux * 13} y1={a.y + uy * 13} x2={ex} y2={ey} strokeWidth={3} />
+            <path d={`M${b.x},${b.y} L${ex - uy * 6},${ey + ux * 6} L${ex + uy * 6},${ey - ux * 6} Z`} strokeWidth={1} />
+          </g>
+        );
+      })()}
     </svg>
   );
 }

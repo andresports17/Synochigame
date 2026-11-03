@@ -74,3 +74,30 @@ export const RULES = {
 } as const;
 
 export type Rules = typeof RULES;
+
+/** Laws Mode settings. One square is about 4.3 m on a 105 × 68 m pitch. */
+export const LAWS = {
+  /** Opponents must be at least this many squares from a free kick or corner (9.15 m ≈ 2 squares). */
+  restartDistance: 2,
+  /** Maximum throw-in distance in squares (about 15–17 m). */
+  throwInRange: 4,
+} as const;
+
+export const LAW_NAMES = {
+  start: 'Law 8 · The start and restart of play',
+  out: 'Law 9 · The ball in and out of play',
+  goal: 'Law 10 · Determining the outcome',
+  offside: 'Law 11 · Offside',
+  keeper: 'Law 12 · Goalkeeper handling',
+  indirectFreeKick: 'Law 13 · Free kicks',
+  throwIn: 'Law 15 · The throw-in',
+  goalKick: 'Law 16 · The goal kick',
+  corner: 'Law 17 · The corner kick',
+} as const;
+
+export const RESTART_NAMES = {
+  throwIn: 'Throw-in',
+  goalKick: 'Goal kick',
+  corner: 'Corner kick',
+  indirectFreeKick: 'Indirect free kick',
+} as const;

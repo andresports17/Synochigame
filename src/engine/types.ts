@@ -1,4 +1,17 @@
 export type Side = 'home' | 'away';
+
+/** 'quick' = simplified casual rules. 'laws' = follows the Laws of the Game (offside, restarts, keeper handling). */
+export type RuleMode = 'quick' | 'laws';
+
+export type RestartType = 'throwIn' | 'goalKick' | 'corner' | 'indirectFreeKick';
+
+/** A dead-ball restart waiting to be taken. */
+export interface Restart {
+  type: RestartType;
+  side: Side;
+  spot: Cell;
+  takerId: string;
+}
 export type Role = 'GK' | 'CB' | 'FB' | 'DM' | 'MF' | 'AM' | 'WG' | 'FW';
 
 /** Board cell. c = column (0 = A … 15 = P), r = row (0 = row 1 … 23 = row 24). */
@@ -48,7 +61,13 @@ export type EventKind =
   | 'tackleFailed'
   | 'endTurn'
   | 'halftime'
-  | 'fulltime';
+  | 'fulltime'
+  | 'offside'
+  | 'out'
+  | 'restart'
+  | 'parry'
+  | 'deflect'
+  | 'encroach';
 
 export interface GameEvent {
   kind: EventKind;
@@ -56,11 +75,18 @@ export interface GameEvent {
   text: string;
   turn: number;
   half: 1 | 2;
+  /** The Law behind the call, e.g. "Law 11 · Offside" (teaching). */
+  law?: string;
 }
 
 export type Phase = 'playing' | 'finished';
 
 export interface GameState {
+  mode: RuleMode;
+  /** Pending dead-ball restart, if any. */
+  restart: Restart | null;
+  /** Attackers who were in an offside position when the last pass into space was played. */
+  offsideWatch: { side: Side; ids: string[] } | null;
   pieces: Piece[];
   ball: Ball;
   turn: Side;
@@ -79,4 +105,5 @@ export interface MatchSetup {
   homeFormation: string;
   awayFormation: string;
   firstKickoff?: Side;
+  mode?: RuleMode;
 }

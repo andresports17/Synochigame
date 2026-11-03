@@ -3,6 +3,12 @@ import {
   DIFFICULTIES,
   FORMATIONS,
   FORMATION_NAMES,
+  LAWS,
+  LAW_NAMES,
+  QUIZ,
+  judge,
+  optionsFor,
+  questionArrow,
   ROLE_NAMES,
   ROLE_STATS,
   RULES,
@@ -10,10 +16,13 @@ import {
   TEAM_NAMES,
   createMatch,
   formationPieces,
+  offsideLine,
+  offsidePositions,
   type Action,
   type Difficulty,
   type GameState,
   type Role,
+  type RuleMode,
   type Scenario,
   type Side,
 } from '../engine';
@@ -25,7 +34,8 @@ import { AWAY_KITS, BOARD_THEMES, HOME_KITS } from './themes';
 type Screen =
   | { id: 'home' }
   | { id: 'setup'; local: boolean }
-  | { id: 'match'; key: number; local: boolean; difficulty: Difficulty; home: string; away: string }
+  | { id: 'match'; key: number; local: boolean; difficulty: Difficulty; home: string; away: string; mode: RuleMode }
+  | { id: 'quiz'; key: number }
   | { id: 'learn' }
   | { id: 'scenario'; scenarioId: string; key: number }
   | { id: 'formations' }
@@ -72,7 +82,7 @@ export function App() {
           local={screen.local}
           profile={profile}
           onBack={home}
-          onStart={(difficulty, h, a) => go({ id: 'match', key: Date.now(), local: screen.local, difficulty, home: h, away: a })}
+          onStart={(difficulty, h, a, mode) => go({ id: 'match', key: Date.now(), local: screen.local, difficulty, home: h, away: a, mode })}
         />
       )}
       {screen.id === 'match' && (
@@ -82,6 +92,7 @@ export function App() {
           difficulty={screen.difficulty}
           home={screen.home}
           away={screen.away}
+          mode={screen.mode}
           theme={theme}
           kits={kits}
           onExit={home}
@@ -102,7 +113,31 @@ export function App() {
           }}
         />
       )}
-      {screen.id === 'learn' && <Learn profile={profile} onBack={home} onPick={(id) => go({ id: 'scenario', scenarioId: id, key: Date.now() })} />}
+      {screen.id === 'learn' && (
+        <Learn
+          profile={profile}
+          onBack={home}
+          onPick={(id) => go({ id: 'scenario', scenarioId: id, key: Date.now() })}
+          onQuiz={() => go({ id: 'quiz', key: Date.now() })}
+        />
+      )}
+      {screen.id === 'quiz' && (
+        <RefsEye
+          key={screen.key}
+          theme={theme}
+          kits={kits}
+          best={profile.completed.includes('refs-eye')}
+          onBack={() => go({ id: 'learn' })}
+          onRetry={() => go({ id: 'quiz', key: Date.now() })}
+          onPass={() =>
+            update((p) =>
+              p.completed.includes('refs-eye')
+                ? p
+                : { ...p, completed: [...p.completed, 'refs-eye'], medals: p.medals + 3, tokens: p.tokens + 60 },
+            )
+          }
+        />
+      )}
       {screen.id === 'scenario' && (
         <ScenarioRun
           key={screen.key}
@@ -177,7 +212,8 @@ function Home({ profile, go }: { profile: Profile; go: (s: Screen) => void }) {
         <MenuTile title="Play vs CPU" body="Beginner, Baller or Master. Earn Tactic Tokens." onClick={() => go({ id: 'setup', local: false })} />
         <MenuTile title="Local match" body="Two players, one device. Pass and play." onClick={() => go({ id: 'setup', local: true })} />
         <MenuTile title="Online" body="Invite a friend with a match code." onClick={() => go({ id: 'online' })} />
-        <MenuTile title="Learn & practise" body={`${lessons.length} lessons and ${SCENARIOS.length - lessons.length} drills. Earn Medals.`} onClick={() => go({ id: 'learn' })} />
+        <MenuTile title="Learn & practise" body={`${lessons.length} basics, ${SCENARIOS.filter((s) => s.kind === 'law').length} Laws lessons and ${SCENARIOS.filter((s) => s.kind === 'drill').length} drills.`} onClick={() => go({ id: 'learn' })} />
+        <MenuTile title="Ref's Eye" body={`${QUIZ.length} referee calls: offside, throw-ins, goal kicks, corners.`} onClick={() => go({ id: 'quiz', key: Date.now() })} />
         <MenuTile title="Formations" body={`${FORMATION_NAMES.length} shapes. Set your default.`} onClick={() => go({ id: 'formations' })} />
         <MenuTile title="Locker" body="Board themes and kits. Cosmetic only." onClick={() => go({ id: 'locker' })} />
         <MenuTile title="Rules" body="Every rule and role stat in one place." onClick={() => go({ id: 'rules' })} />
@@ -208,8 +244,9 @@ function BackBar({ title, onBack }: { title: string; onBack: () => void }) {
 
 // ------------------------------------------------------------------ match setup
 
-function Setup({ local, profile, onBack, onStart }: { local: boolean; profile: Profile; onBack: () => void; onStart: (d: Difficulty, h: string, a: string) => void }) {
+function Setup({ local, profile, onBack, onStart }: { local: boolean; profile: Profile; onBack: () => void; onStart: (d: Difficulty, h: string, a: string, mode: RuleMode) => void }) {
   const [difficulty, setDifficulty] = useState<Difficulty>('pro');
+  const [mode, setMode] = useState<RuleMode>('laws');
   const [h, setH] = useState(profile.formation);
   const [a, setA] = useState('4-4-2');
   return (
@@ -227,6 +264,21 @@ function Setup({ local, profile, onBack, onStart }: { local: boolean; profile: P
           ))}
         </fieldset>
       )}
+      <fieldset className="choices">
+        <legend>Rules</legend>
+        {(
+          [
+            ['laws', 'Laws Mode', 'Offside, throw-ins, goal kicks and corners, as in the Laws of the Game. Keepers may leave the box but only handle inside it.'],
+            ['quick', 'Quick Play', 'Simplified rules: no offside and the ball never goes out of play.'],
+          ] as [RuleMode, string, string][]
+        ).map(([m, label, blurb]) => (
+          <label key={m} className={`choice ${m === mode ? 'on' : ''}`}>
+            <input type="radio" name="rule-mode" id={`mode-${m}`} checked={m === mode} onChange={() => setMode(m)} />
+            <strong>{label}</strong>
+            <span>{blurb}</span>
+          </label>
+        ))}
+      </fieldset>
       <div className="two-col">
         <FormationPicker label={`${TEAM_NAMES.home} formation${local ? '' : ' (you)'}`} value={h} onChange={setH} id="fh" />
         <FormationPicker label={`${TEAM_NAMES.away} formation${local ? '' : ' (CPU)'}`} value={a} onChange={setA} id="fa" />
@@ -234,7 +286,7 @@ function Setup({ local, profile, onBack, onStart }: { local: boolean; profile: P
       <p className="note">
         A match is two halves of {RULES.turnsPerHalf / 2} turns per side. {TEAM_NAMES.home} kick off and attack downward.
       </p>
-      <button type="button" className="btn primary big" onClick={() => onStart(difficulty, h, a)}>
+      <button type="button" className="btn primary big" onClick={() => onStart(difficulty, h, a, mode)}>
         Kick off
       </button>
     </main>
@@ -261,6 +313,7 @@ function LocalMatch({
   difficulty,
   home,
   away,
+  mode,
   theme,
   kits,
   onExit,
@@ -271,13 +324,14 @@ function LocalMatch({
   difficulty: Difficulty;
   home: string;
   away: string;
+  mode: RuleMode;
   theme: (typeof BOARD_THEMES)[number];
   kits: { home: (typeof HOME_KITS)[number]; away: (typeof AWAY_KITS)[number] };
   onExit: () => void;
   onRematch: () => void;
   onFinish: (s: GameState) => number | void;
 }) {
-  const initial = useMemo(() => createMatch({ homeFormation: home, awayFormation: away }), [home, away]);
+  const initial = useMemo(() => createMatch({ homeFormation: home, awayFormation: away, mode }), [home, away, mode]);
   const controllers: Record<Side, Controller> = { home: 'human', away: local ? 'human' : difficulty };
   const { state, act, cpuThinking } = useLocalMatch(initial, controllers);
   const [earned, setEarned] = useState<number | null>(null);
@@ -316,7 +370,7 @@ function LocalMatch({
       <div className="backbar">
         <button type="button" className="btn ghost small" onClick={onExit}>← Leave match</button>
         <span className="muted">
-          {local ? 'Local match' : `vs CPU · ${DIFFICULTIES[difficulty].label}`} · {home} v {away}
+          {local ? 'Local match' : `vs CPU · ${DIFFICULTIES[difficulty].label}`} · {mode === 'laws' ? 'Laws Mode' : 'Quick Play'} · {home} v {away}
         </span>
       </div>
       <MatchView
@@ -334,14 +388,22 @@ function LocalMatch({
 
 // ------------------------------------------------------------------ learn
 
-function Learn({ profile, onBack, onPick }: { profile: Profile; onBack: () => void; onPick: (id: string) => void }) {
+function Learn({ profile, onBack, onPick, onQuiz }: { profile: Profile; onBack: () => void; onPick: (id: string) => void; onQuiz: () => void }) {
   const groups: [string, Scenario[]][] = [
-    ['Lessons', SCENARIOS.filter((s) => s.kind === 'lesson')],
+    ['The basics', SCENARIOS.filter((s) => s.kind === 'lesson')],
+    ['Laws of the Game', SCENARIOS.filter((s) => s.kind === 'law')],
     ['Practice drills', SCENARIOS.filter((s) => s.kind === 'drill')],
   ];
   return (
     <main className="page">
       <BackBar title="Learn & practise" onBack={onBack} />
+      <button type="button" className={`list-item feature ${profile.completed.includes('refs-eye') ? 'done' : ''}`} onClick={onQuiz}>
+        <span className="status" aria-label={profile.completed.includes('refs-eye') ? 'Passed' : 'Not passed'}>{profile.completed.includes('refs-eye') ? '✓' : ''}</span>
+        <span className="li-body">
+          <strong>Ref's Eye: referee training</strong>
+          <span>Make {QUIZ.length} referee calls on offside and restarts. Score {REFS_PASS} or more to earn 3 Medals.</span>
+        </span>
+      </button>
       {groups.map(([title, list]) => (
         <section key={title} className="stack">
           <h3 className="eyebrow">{title}</h3>
@@ -632,6 +694,18 @@ function RulesPage({ onBack }: { onBack: () => void }) {
       <p>Box Keepers must stay inside their own penalty area (columns D–M, {RULES.boxDepth} rows deep).</p>
       <h3>Goals and restarts</h3>
       <p>After a goal both teams reset to their formations and the side that conceded kicks off. The second half is kicked off by the team that did not start the first.</p>
+      <h3>Laws Mode</h3>
+      <p>Laws Mode follows the Laws of the Game where a board allows. One square is about 4.3 m, so 9.15 m (10 yards) is 2 squares.</p>
+      <ul>
+        <li><b>{LAW_NAMES.offside}.</b> When a teammate passes, an attacker is offside if they are in the opponent's half and nearer the goal line than both the ball and the second-last defender. Level is onside. It is judged when the ball is played, and only punished if that attacker then plays the ball. The restart is an indirect free kick to the defenders. There is no offside from a throw-in, goal kick or corner.</li>
+        <li><b>{LAW_NAMES.out}.</b> The ball is out when it leaves the pitch completely. A pass may be played out on purpose (the orange diamonds).</li>
+        <li><b>{LAW_NAMES.throwIn}.</b> To the team that did not touch the ball last, from where it went out. Up to {LAWS.throwInRange} squares. No goal directly from a throw-in.</li>
+        <li><b>{LAW_NAMES.goalKick}.</b> When attackers put the ball over the goal line. The keeper takes it from the goal area; opponents leave the penalty area until it is taken.</li>
+        <li><b>{LAW_NAMES.corner}.</b> When defenders put the ball over their own goal line, including a keeper's parry or a deflected shot. Opponents stay {LAWS.restartDistance} squares away. A goal can be scored directly.</li>
+        <li><b>{LAW_NAMES.indirectFreeKick}.</b> Given for offside. Opponents stay {LAWS.restartDistance} squares away, and the ball must touch another player before a goal can count.</li>
+        <li><b>{LAW_NAMES.keeper}.</b> Keepers may go anywhere, but can only save with their hands inside their own penalty area. Outside it they block like any other player.</li>
+        <li><b>Restarts.</b> While a restart is pending the ball is out of play: no tackles. If the other side is to move first, they may reposition but must respect the distances. The restarting side may move other pieces before taking the kick.</li>
+      </ul>
       <h3>No luck</h3>
       <p>There are no dice and no hidden information. The preview always shows exactly what an action will do, so every result comes down to your plan.</p>
       <h3>Roles</h3>
@@ -755,4 +829,131 @@ function Online({ profile, onBack, theme, kits }: { profile: Profile; onBack: ()
       {err && <p className="error">{err}</p>}
     </main>
   );
+}
+
+// ------------------------------------------------------------------ Ref's Eye
+
+const REFS_PASS = 10;
+
+function RefsEye({
+  theme,
+  kits,
+  best,
+  onBack,
+  onRetry,
+  onPass,
+}: {
+  theme: (typeof BOARD_THEMES)[number];
+  kits: { home: (typeof HOME_KITS)[number]; away: (typeof AWAY_KITS)[number] };
+  best: boolean;
+  onBack: () => void;
+  onRetry: () => void;
+  onPass: () => void;
+}) {
+  const [i, setI] = useState(0);
+  const [answer, setAnswer] = useState<string | null>(null);
+  const [score, setScore] = useState(0);
+  const [done, setDone] = useState(false);
+  const q = QUIZ[i];
+  const before = useMemo(() => q.setup(), [q]);
+  const verdict = useMemo(() => judge(q), [q]);
+  const arrow = useMemo(() => questionArrow(q), [q]);
+  const correct = answer !== null && answer === verdict.call;
+  const passer = q.action.type === 'pass' || q.action.type === 'shoot' ? q.action.pieceId : null;
+  const showLine = answer !== null && q.kind === 'offside' && before.restart === null && passer;
+
+  const choose = (opt: string) => {
+    if (answer) return;
+    setAnswer(opt);
+    if (opt === verdict.call) setScore((n) => n + 1);
+  };
+  const next = () => {
+    if (i + 1 < QUIZ.length) {
+      setI(i + 1);
+      setAnswer(null);
+    } else {
+      setDone(true);
+      if (score >= REFS_PASS) onPass();
+    }
+  };
+
+  if (done)
+    return (
+      <main className="page">
+        <BackBar title="Ref's Eye" onBack={onBack} />
+        <div className={`result ${score >= REFS_PASS ? 'success' : 'fail'}`}>
+          <h3>
+            {score} / {QUIZ.length} correct calls
+          </h3>
+          <p>{score >= REFS_PASS ? (best ? 'Passed again. Sharp eyes.' : 'Passed! +3 Medals, +60 Tactic Tokens') : `Score ${REFS_PASS} or more to pass.`}</p>
+          <div className="row">
+            <button type="button" className="btn primary" onClick={onRetry}>Try again</button>
+            <button type="button" className="btn ghost" onClick={onBack}>Back to lessons</button>
+          </div>
+        </div>
+      </main>
+    );
+
+  const from = passer ? before.pieces.find((p) => p.id === passer) : undefined;
+  return (
+    <main className="page wide">
+      <div className="backbar">
+        <button type="button" className="btn ghost small" onClick={onBack}>← Lessons</button>
+        <span className="muted mono">
+          Call {i + 1} of {QUIZ.length} · {score} correct
+        </span>
+      </div>
+      <div className="match-body">
+        <div className="board-wrap">
+          <Board
+            state={answer && q.kind === 'restart' ? verdict.after : before}
+            theme={theme}
+            kits={kits}
+            arrow={answer && q.kind === 'restart' ? null : arrow}
+            offside={showLine && from ? { side: from.side, line: offsideLineFor(before, from.side) } : null}
+            flagged={showLine && from ? offsideIdsFor(before, from.id) : []}
+            restartSpot={answer && q.kind === 'restart' ? verdict.after.restart?.spot ?? null : null}
+          />
+        </div>
+        <aside className="panel">
+          <div className="callout">
+            <div className="eyebrow">{q.law}</div>
+            <strong>You are the referee</strong>
+            <p>{q.prompt}</p>
+          </div>
+          <div className="quiz-options" role="group" aria-label="Your call">
+            {optionsFor(q).map((opt) => (
+              <button
+                key={opt}
+                type="button"
+                className={`btn ${answer === null ? '' : opt === verdict.call ? 'right' : opt === answer ? 'wrong' : ''}`}
+                disabled={answer !== null}
+                onClick={() => choose(opt)}
+              >
+                {opt}
+              </button>
+            ))}
+          </div>
+          {answer && (
+            <div className={`result ${correct ? 'success' : 'fail'}`}>
+              <h3>{correct ? 'Correct call' : `The call: ${verdict.call}`}</h3>
+              <p className="explain">{q.explain}</p>
+              <button type="button" className="btn primary" onClick={next}>
+                {i + 1 < QUIZ.length ? 'Next call' : 'See your score'}
+              </button>
+            </div>
+          )}
+        </aside>
+      </div>
+    </main>
+  );
+}
+
+function offsideLineFor(s: GameState, side: Side) {
+  return offsideLine(s, side);
+}
+
+function offsideIdsFor(s: GameState, passerId: string) {
+  const p = s.pieces.find((x) => x.id === passerId);
+  return p ? offsidePositions(s, p).map((x) => x.id) : [];
 }

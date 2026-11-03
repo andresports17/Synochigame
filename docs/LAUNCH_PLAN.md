@@ -1,12 +1,12 @@
 # SYNOCHÍ launch plan (working draft, revised after the Development Brief)
 
-Sources: the commercial launch memo; the Development Brief (11 Oct 2026, by King Dave), which documents the Replit prototype as of 23 June 2026; the developer proposal (Atharv Chauhan, revised: $3,500 fixed, or $3,950 accelerated); and this repository.
+SYNOCHÍ is David André's project. Sources: the commercial launch memo; the Development Brief (11 Oct 2026, by King Dave), which documents the Replit prototype as of 23 June 2026; and this repository. No development partner is under contract.
 
 ## 1. What the brief changes
 
 **The Replit prototype is the product.** According to the brief it already has the full rules, a three-level CPU, online play, a 24-lesson tutorial, 13 drills, a formation editor, ranked tiers, missions, a season pass, four currencies, Stripe token packs, clubs, leaderboards, accounts and accessibility options.
 
-This repository (v0.1) is a separate, smaller rebuild written before the brief was available. Its rules are provisional and differ from the prototype (section 3). **Recommendation:** use the Replit prototype as the launch base, as Atharv's proposal assumes. Keep this repo only as an independent reference: its tests, its replay verification endpoint and its parts calculation can be checked against the prototype. Don't pay to build the same game twice.
+This repository (v0.1) is a separate, smaller rebuild written before the brief was available. Its rules are provisional and differ from the prototype (section 3). **Recommendation:** once the rules are settled, decide which code base goes to launch: the Replit prototype (far more features) or this repo (Laws Mode, tested engine, replay verification). Whichever is chosen, the other serves as a reference to check it against. Laws Mode is specified in [LAWS_MODE.md](LAWS_MODE.md) so it can be carried into either.
 
 ## 2. Concept art vs. the prototype (corrected)
 
@@ -79,22 +79,23 @@ Also include: a folding 24 × 16 board, ball token, rulebook, formation cards, a
 
 The LongPack quote request is already sent; send this as an addendum. The Panda quote request has not been submitted yet. Panda's minimum order is 1,500 units.
 
-## 6. Launch roadmap (developer proposal phases)
+## 6. Launch roadmap
 
 | Phase | Work | Notes |
 |---|---|---|
 | 0. Audit | Run the prototype's 22 test suites; settle the 11 open rule decisions; turn the CPU's late-game logic back on | Needs the Replit export |
+| Rules | Laws Mode stage 1 (offside, ball out of play, throw-ins, goal kicks, corners, keeper handling) is built and tested here; stages 2–3 in [LAWS_MODE.md](LAWS_MODE.md) | David to approve each stage |
 | 1. Foundation | Move Tactic Tokens, Gold Boots and Mission Medals to a server ledger (they're editable on the device today); season config and Season 2 setup; move hosting off Replit; grant rewards for online matches after server validation | v0.1's `/api/verify` replay approach is a working example |
 | 2. Mobile apps | Capacitor iOS and Android builds, push notifications, haptics, deep links | |
 | 3. Store billing | In-app purchases with receipt validation; fix the 150 vs 135 token gap first | |
-| 4. Online play | Rewards for online matches; optional matchmaking queue (about $475) using the existing hidden rating | |
+| 4. Online play | Rewards for online matches; optional matchmaking queue using the existing hidden rating | |
 | 5. QA and beta | Device testing, TestFlight and Play internal testing, store submission | |
 
 Outside the build: final piece art and store screenshots; Apple ($99 a year) and Google ($25 once) developer accounts; legal review of the privacy policy and terms, which exist; trademark clearance for SYNOCHÍ and Sinohi; and support processes.
 
 ## 7. Decisions needed
 
-1. Share the Replit export and the Rules, CPU and Open Decisions tabs with the developer, under NDA.
+1. Share the Replit export and the Rules, CPU and Open Decisions tabs, so Laws Mode can be checked against David's written rules.
 2. Settle the 11 open rule decisions.
 3. Season pass price: fix the 150-token vs. 135-token gap.
 4. Drop or keep the Founder's Edition (not in the build) and the blockchain and 3D claims.
