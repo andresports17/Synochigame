@@ -1,55 +1,93 @@
-import { RULES } from './config';
+import { COLS, ROWS, inAnyKeeperBox, inCentreCircle, inKeeperBox, inOwnHalf, key } from './board';
 import type { Piece, Role, Side } from './types';
 
-type Slot = [Role, number, number]; // role, column, row — from the home side's view (home defends row 1)
+type Slot = [Role, number, number]; // role, column, depth (0 = own goal line)
 
-/** Every formation keeps all eleven pieces in their own half (rows 1–11). */
-export const FORMATIONS: Record<string, Slot[]> = {
-  '4-3-3': [
-    ['GK', 7, 0],
-    ['CB', 6, 3], ['CB', 9, 3], ['FB', 2, 4], ['FB', 13, 4],
-    ['DM', 7, 6], ['MF', 4, 8], ['AM', 10, 8],
-    ['WG', 2, 10], ['FW', 7, 10], ['WG', 13, 10],
-  ],
-  '4-4-2': [
-    ['GK', 7, 0],
-    ['CB', 6, 3], ['CB', 9, 3], ['FB', 2, 4], ['FB', 13, 4],
-    ['WG', 2, 8], ['DM', 6, 7], ['MF', 9, 7], ['WG', 13, 8],
-    ['FW', 6, 10], ['FW', 9, 10],
-  ],
-  '3-5-2': [
-    ['GK', 7, 0],
-    ['CB', 4, 3], ['CB', 7, 2], ['CB', 11, 3],
-    ['FB', 1, 7], ['DM', 7, 5], ['MF', 5, 8], ['AM', 10, 8], ['FB', 14, 7],
-    ['FW', 6, 10], ['FW', 9, 10],
-  ],
-  '4-2-3-1': [
-    ['GK', 7, 0],
-    ['CB', 6, 3], ['CB', 9, 3], ['FB', 2, 4], ['FB', 13, 4],
-    ['DM', 5, 6], ['DM', 10, 6],
-    ['WG', 2, 9], ['AM', 7, 8], ['WG', 13, 9],
-    ['FW', 8, 10],
-  ],
-  '5-3-2': [
-    ['GK', 7, 0],
-    ['FB', 1, 5], ['CB', 4, 3], ['CB', 7, 2], ['CB', 11, 3], ['FB', 14, 5],
-    ['MF', 4, 8], ['DM', 7, 6], ['MF', 11, 8],
-    ['FW', 6, 10], ['FW', 9, 10],
-  ],
+/**
+ * Preset formations (rule 2.2). Slots are given from the team's own goal line
+ * outward; home is placed at the bottom of the board and away mirrored at the top.
+ * Positions respect rule 2.1: own half, keeper in its six-yard box, no outfield
+ * piece in a six-yard box, and nothing in the centre circle.
+ */
+export const FORMATIONS: Record<string, { blurb: string; slots: Slot[] }> = {
+  '4-3-3': {
+    blurb: 'Balanced width and attack; default preset.',
+    slots: [
+      ['GK', 7, 0],
+      ['CB', 6, 3], ['CB', 9, 3], ['FB', 2, 4], ['FB', 13, 4],
+      ['DM', 7, 6], ['MF', 4, 8], ['AM', 10, 8],
+      ['WG', 2, 10], ['FW', 7, 9], ['WG', 13, 10],
+    ],
+  },
+  '4-4-2': {
+    blurb: 'Classic two banks of four.',
+    slots: [
+      ['GK', 7, 0],
+      ['CB', 6, 3], ['CB', 9, 3], ['FB', 2, 4], ['FB', 13, 4],
+      ['WG', 2, 8], ['DM', 6, 7], ['MF', 9, 7], ['WG', 13, 8],
+      ['FW', 6, 9], ['FW', 9, 9],
+    ],
+  },
+  '3-5-2': {
+    blurb: 'Packed midfield, wing-backs.',
+    slots: [
+      ['GK', 7, 0],
+      ['CB', 4, 3], ['CB', 7, 3], ['CB', 11, 3],
+      ['FB', 1, 7], ['DM', 7, 5], ['MF', 5, 8], ['AM', 10, 8], ['FB', 14, 7],
+      ['FW', 6, 9], ['FW', 9, 9],
+    ],
+  },
+  '4-2-3-1': {
+    blurb: 'Double pivot, creative line.',
+    slots: [
+      ['GK', 7, 0],
+      ['CB', 6, 3], ['CB', 9, 3], ['FB', 2, 4], ['FB', 13, 4],
+      ['DM', 5, 6], ['DM', 10, 6],
+      ['WG', 2, 9], ['AM', 7, 7], ['WG', 13, 9],
+      ['FW', 8, 9],
+    ],
+  },
+  '5-3-2': {
+    blurb: 'Defensive, counter-attacking.',
+    slots: [
+      ['GK', 7, 0],
+      ['FB', 1, 5], ['CB', 4, 3], ['CB', 7, 3], ['CB', 11, 3], ['FB', 14, 5],
+      ['MF', 4, 8], ['DM', 7, 6], ['MF', 11, 8],
+      ['FW', 6, 9], ['FW', 9, 9],
+    ],
+  },
 };
 
 export const FORMATION_NAMES = Object.keys(FORMATIONS);
+export const DEFAULT_FORMATION = '4-3-3';
 
 export function formationPieces(side: Side, name: string): Piece[] {
-  const slots = FORMATIONS[name];
-  if (!slots) throw new Error(`Unknown formation ${name}`);
-  return slots.map(([role, c, r], i) => ({
+  const f = FORMATIONS[name];
+  if (!f) throw new Error(`Unknown formation ${name}`);
+  return f.slots.map(([role, c, depth], i) => ({
     id: `${side === 'home' ? 'H' : 'A'}${i}`,
     side,
     role,
-    // Away mirrors the home layout through the centre of the board.
-    pos: side === 'home' ? { c, r } : { c: RULES.cols - 1 - c, r: RULES.rows - 1 - r },
-    moved: false,
-    tackled: false,
+    pos: side === 'home' ? { c, r: ROWS - 1 - depth } : { c: COLS - 1 - c, r: depth },
   }));
+}
+
+/** Rule 2.1 checks for any formation (presets and custom). Returns a list of problems; empty means legal. */
+export function validateFormation(side: Side, pieces: Piece[]): string[] {
+  const errors: string[] = [];
+  if (pieces.length !== 11) errors.push('A formation needs exactly 11 pieces');
+  const keepers = pieces.filter((p) => p.role === 'GK');
+  if (keepers.length !== 1) errors.push('A formation needs exactly one Box Keeper');
+  if (!pieces.some((p) => p.role === 'FW')) errors.push('A formation needs at least one Frontliner to take the kickoff');
+  const seen = new Set<number>();
+  for (const p of pieces) {
+    if (!inOwnHalf(side, p.pos)) errors.push(`${p.role} must start in its own half`);
+    if (p.role === 'GK' && !inKeeperBox(side, p.pos)) errors.push('The Box Keeper must start inside its own six-yard box');
+    if (p.role !== 'GK' && inAnyKeeperBox(p.pos)) errors.push(`${p.role} may not start in a six-yard box`);
+    if (inCentreCircle(p.pos)) errors.push(`${p.role} may not start in the centre circle`);
+    const k = key(p.pos);
+    if (seen.has(k)) errors.push('Two pieces cannot share a square');
+    seen.add(k);
+  }
+  return errors;
 }

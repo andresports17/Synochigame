@@ -15,46 +15,39 @@ npm run build:demo  # single-file web demo: dist-single/synochi-web-demo.html
 
 ## What's in the game
 
-| Area | Status in v0.1 |
+The rules are **David André's official SYNOCHÍ rules** (extraction draft, 3 November 2026). See [docs/OFFICIAL_RULES_IMPLEMENTATION.md](docs/OFFICIAL_RULES_IMPLEMENTATION.md) for how each section is implemented and the points awaiting confirmation.
+
+| Area | Status |
 |---|---|
-| Rules engine (move, dribble, ground and lofted passes, shots, keeper saves, supported tackles, one-twos, halves, kickoffs) | Done. Deterministic, fully tested |
-| CPU opponent: Beginner, Baller, Master | Done. Beam search over whole turns |
-| Play vs CPU, local two-player | Done |
-| Online invite-code matches, server-authoritative | Done (in-memory server) |
-| Match verification by replaying the action log (`POST /api/verify`) | Done |
-| 7 basic lessons and 3 practice drills | Done |
-| 5 formations: 4-3-3, 4-4-2, 3-5-2, 4-2-3-1, 5-3-2 | Done |
-| Locker: board themes and kits bought with earned Tactic Tokens, cosmetic only | Done (stored in the browser) |
-| Laws Mode: offside, ball out of play, throw-ins, goal kicks, corners, keeper handling ([spec](docs/LAWS_MODE.md)) | Done, tested |
-| Ref's Eye referee training quiz (12 calls) and 4 Laws lessons | Done |
-| Rules page generated from the engine's config | Done |
-| Accounts, server-side currency ledger, seasons, store billing, native apps, matchmaking | Not yet. See [docs/LAUNCH_PLAN.md](docs/LAUNCH_PLAN.md) |
+| Rules engine: ray movement per role, one piece per turn with follow-ups, straight/diagonal passing with interception and contested reception, offside, one-twos, reactive and active tackles, shooting zones, saves and rebounds, kickoff, real-time clock | Done; tested section by section |
+| CPU: Beginner, Baller, Master | Done (needs balance tuning) |
+| Play vs CPU (official real-time clock or relaxed), local two-player, online invite codes with a server-side clock | Done |
+| Result verification by replaying the action log (`POST /api/verify`) | Done |
+| 9 lessons (one rule each) and the Ref's Eye quiz (14 calls) | Done |
+| Live match statistics, half-time formation changes | Done |
+| 5 preset formations with a rule-2.1 validator | Done; custom formation editor not built |
+| Locker: board themes and kits (cosmetic) | Done (stored in the browser) |
+| Accounts, server currency ledger, seasons, store billing, native apps, matchmaking | Not yet; see [docs/LAUNCH_PLAN.md](docs/LAUNCH_PLAN.md) |
 
 ## Architecture
 
 ```
-src/engine/      Pure TypeScript rules library shared by the client and the server
-  config.ts      ALL rule numbers and role stats (the one file to edit for the official rules)
-  rules.ts       Actions, validation, resolution, replay
-  cpu.ts         CPU opponent (evaluation + beam search)
-  formations.ts  Formation layouts
-  scenarios.ts   Lessons and drills
-  quiz.ts        Ref's Eye referee-training questions
-src/ui/          React web app (board renderer, match screen, menus)
-server/          Express match server (online play, result verification)
-tests/           Vitest suites for the engine and the server
+src/engine/       Pure TypeScript rules library shared by the client and the server
+  board.ts        Board geometry, zones, shooting zones (rule 1, 8.1)
+  roles.ts        Role names, movement ranges, one-two partners (rules 2, 3, 5.4)
+  formations.ts   Presets and formation validation (rule 2)
+  rules.ts        Turns, passing, offside, tackling, shooting, kickoff, clock (rules 4–9)
+  cpu.ts          CPU opponent (rule 10)
+  scenarios.ts    Lessons
+  quiz.ts         Ref's Eye questions
+src/ui/           React web app
+server/           Express match server (online play with a server-side clock, result verification)
+tests/            Vitest suites
+docs/             Rules implementation notes, launch plan
 ```
 
-The engine has no randomness and treats state as immutable. The same setup plus the same action list always gives the same match. That is what lets the server validate online moves and verify rewards before granting them.
+The engine is deterministic and treats state as immutable. The same setup and action log, clock ticks included, always produce the same match.
 
-## Important: this is not the prototype
+## Rule changes
 
-David André's Replit prototype (documented in the Development Brief, Oct 2026) is the more complete game and should be the launch base. This repository is an independent v0.1 rebuild written before the brief was available. Role names, CPU levels and match rewards match the brief, but the rules differ in several ways (one action per turn, real-time clock, offside, rebounds, role-specific movement). See section 3 of [docs/LAUNCH_PLAN.md](docs/LAUNCH_PLAN.md).
-
-This build was written without access to the original SYNOCHÍ Replit project or the official rulebook. The rules here are a complete, playable placeholder set. When the official Rules tab is available:
-
-1. Update the numbers in `src/engine/config.ts`.
-2. Change any rule that works differently in `src/engine/rules.ts`. Each action is resolved in one clearly named function.
-3. Run `npm test` and update the tests that encode the old behaviour.
-
-If the original Replit code is the better base, the engine here can be compared against it rule by rule, or dropped in as the server-side validator.
+Every rule lives in one clearly named function in `src/engine/rules.ts`, with movement ranges in `roles.ts` and zones in `board.ts`. To change a rule, edit it there and update the matching block in `tests/official.test.ts`. Points still awaiting David's confirmation are listed in the implementation notes.

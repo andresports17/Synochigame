@@ -1,34 +1,30 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  LAW_NAMES,
-  RESTART_NAMES,
   ROLE_NAMES,
-  ROLE_STATS,
-  RULES,
+  ROLE_SUMMARY,
   TEAM_NAMES,
+  TURN_MS,
+  TURN_WARNING_MS,
+  actionsFor,
   applyAction,
+  carrierOf,
   cellName,
+  clockText,
   getPiece,
-  matchMinute,
-  moveTargets,
   offsideLine,
-  offsidePositions,
-  onBoard,
-  oneTwoPartners,
-  oneTwoTargets,
-  passTargets,
+  passOutcome,
   pieceAt,
   planTurn,
   previewAction,
+  resolveAction,
   sameCell,
-  shotTargets,
-  tackleTargets,
+  shotOutcome,
+  isOffside,
   type Action,
   type Cell,
   type Difficulty,
   type GameEvent,
   type GameState,
-  type RestartType,
   type Side,
 } from '../engine';
 import { Board, type Overlay } from './Board';
@@ -36,81 +32,104 @@ import type { BoardTheme, Kit } from './themes';
 
 export type Controller = 'human' | 'pass' | Difficulty;
 
-/** Runs a local match: human input plus CPU turns played back one action at a time. */
-export function useLocalMatch(initial: GameState, controllers: Record<Side, Controller>) {
+/** 'realtime' = the official clock (rule 9). 'relaxed' = no turn timer; each turn uses 6 s of match clock. */
+export type ClockMode = 'realtime' | 'relaxed';
+export const RELAXED_TURN_MS = 6000;
+
+/** Runs a local match: human input, CPU turns played back step by step, and the clocks. */
+export function useLocalMatch(initial: GameState, controllers: Record<Side, Controller>, clockMode: ClockMode = 'realtime') {
   const [state, setState] = useState(initial);
   const [cpuThinking, setCpuThinking] = useState(false);
-  const stateRef = useRef(state);
-  stateRef.current = state;
+  const [paused, setPaused] = useState(false);
+  const ref = useRef(state);
+  ref.current = state;
 
+  const dispatch = (a: Action) => {
+    const next = applyAction(ref.current, a); // throws on an illegal action
+    ref.current = next;
+    setState(next);
+  };
+
+  // Real-time clock.
+  useEffect(() => {
+    if (clockMode !== 'realtime' || !initial.timed || paused) return;
+    let last = performance.now();
+    const id = window.setInterval(() => {
+      const now = performance.now();
+      const ms = Math.round(now - last);
+      last = now;
+      if (ref.current.phase === 'playing') dispatch({ type: 'tick', ms });
+    }, 250);
+    return () => window.clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clockMode, paused, initial.timed]);
+
+  // Relaxed clock: each completed turn uses a fixed slice of the match clock.
+  const lastTurn = useRef(state.turnNumber);
+  useEffect(() => {
+    if (clockMode !== 'relaxed' || !initial.timed) return;
+    if (state.turnNumber !== lastTurn.current) {
+      lastTurn.current = state.turnNumber;
+      if (state.phase === 'playing' && !state.kickoffPending) dispatch({ type: 'tick', ms: RELAXED_TURN_MS });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.turnNumber, state.phase]);
+
+  // CPU turns.
   useEffect(() => {
     const ctl = controllers[state.turn];
-    if (ctl === 'human' || state.phase !== 'playing') return;
+    if (ctl === 'human' || state.phase !== 'playing' || paused) return;
     let cancelled = false;
     const timers: number[] = [];
     setCpuThinking(true);
+    const turn = state.turnNumber;
     timers.push(
       window.setTimeout(() => {
-        const start = stateRef.current;
+        const start = ref.current;
+        if (start.turnNumber !== turn || start.phase !== 'playing') return setCpuThinking(false);
         const plan: Action[] = ctl === 'pass' ? [{ type: 'endTurn' }] : planTurn(start, ctl);
-        let s = start;
         let i = 0;
         const step = () => {
           if (cancelled) return;
-          if (i >= plan.length || s.phase !== 'playing' || s.turn !== start.turn || s.turnsPlayed !== start.turnsPlayed) {
-            setCpuThinking(false);
-            return;
+          const s = ref.current;
+          if (i >= plan.length || s.phase !== 'playing' || s.turnNumber !== turn) return setCpuThinking(false);
+          try {
+            dispatch(plan[i++]);
+          } catch {
+            return setCpuThinking(false);
           }
-          s = applyAction(s, plan[i++]);
-          setState(s);
-          timers.push(window.setTimeout(step, ctl === 'pass' ? 250 : 700));
+          timers.push(window.setTimeout(step, 650));
         };
         step();
-      }, ctl === 'pass' ? 350 : 450),
+      }, ctl === 'pass' ? 300 : 550),
     );
     return () => {
       cancelled = true;
       timers.forEach(clearTimeout);
       setCpuThinking(false);
     };
-    // Re-plan only at turn boundaries.
+    // Re-plan whenever a new turn starts.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.turn, state.turnsPlayed, state.half, state.phase]);
+  }, [state.turnNumber, state.phase, paused]);
 
-  const act = (a: Action) => {
-    const next = applyAction(stateRef.current, a); // throws on an illegal action
-    stateRef.current = next;
-    setState(next);
-  };
-  return { state, setState, act, cpuThinking };
+  return { state, dispatch, cpuThinking, paused, setPaused };
 }
-
-type Mode = 'move' | 'pass' | 'shoot' | 'tackle' | 'oneTwo';
-
-const MODE_LABEL: Record<Mode, string> = { move: 'Move', pass: 'Pass', shoot: 'Shoot', tackle: 'Tackle', oneTwo: 'One-Two' };
 
 const EVENT_TONE: Partial<Record<GameEvent['kind'], string>> = {
   goal: 'good',
   save: 'warn',
   block: 'warn',
+  goalKick: 'warn',
   intercept: 'bad',
-  tackleWon: 'bad',
+  blocked: 'bad',
+  contested: 'bad',
+  offside: 'bad',
+  tackle: 'bad',
+  reactiveTackle: 'bad',
+  timeout: 'bad',
   halftime: 'info',
   fulltime: 'info',
   kickoff: 'info',
-  offside: 'bad',
-  out: 'info',
-  restart: 'info',
-  encroach: 'info',
-  parry: 'warn',
-  deflect: 'warn',
-};
-
-export const RESTART_HELP: Record<RestartType, string> = {
-  throwIn: 'Taken from where the ball crossed the touchline. Up to 4 squares. No offside, and no goal directly from a throw-in.',
-  goalKick: 'Taken by the keeper from the goal area. Opponents stay outside the penalty area until it is taken. No offside.',
-  corner: 'Taken from the corner square. Opponents stay 2 squares (9.15 m) away. No offside, and a goal can be scored directly.',
-  indirectFreeKick: 'Taken where the offence happened. Opponents stay 2 squares away. The ball must touch another player before a goal counts.',
 };
 
 interface ViewProps {
@@ -122,93 +141,65 @@ interface ViewProps {
   kits: { home: Kit; away: Kit };
   banner?: React.ReactNode;
   statusNote?: string;
+  controls?: React.ReactNode;
+  clockMode?: ClockMode;
 }
 
-export function MatchView({ state, onAction, humanSides, busy, theme, kits, banner, statusNote }: ViewProps) {
+export function MatchView({ state, onAction, humanSides, busy, theme, kits, banner, statusNote, controls, clockMode = 'realtime' }: ViewProps) {
   const [sel, setSel] = useState<string | null>(null);
-  const [mode, setMode] = useState<Mode>('move');
-  const [via, setVia] = useState<string | null>(null);
+  const [oneTwoMode, setOneTwoMode] = useState(false);
   const [pending, setPending] = useState<Action | null>(null);
   const [hover, setHover] = useState<Cell | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const myTurn = humanSides.includes(state.turn) && state.phase === 'playing' && !busy;
+  // During a follow-up or a kickoff only one piece may act: select it for the player.
+  const forced = state.followUp?.pieceId ?? (state.kickoffPending ? state.ball.carrier : null);
+  useEffect(() => {
+    setPending(null);
+    setOneTwoMode(false);
+    if (!myTurn) setSel(null);
+    else if (forced) setSel(forced);
+    else setSel((cur) => (cur && getPiece(state, cur)?.side === state.turn ? cur : null));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.turnNumber, state.followUp?.pieceId, state.kickoffPending, myTurn]);
+
   const selPiece = sel ? getPiece(state, sel) : undefined;
+  const opts = useMemo(() => (selPiece && myTurn ? actionsFor(state, selPiece) : null), [state, selPiece, myTurn]);
 
-  // Clear selection whenever the turn changes or the piece is no longer ours.
-  useEffect(() => {
-    if (!selPiece || selPiece.side !== state.turn || !myTurn) {
-      setSel(null);
-      setPending(null);
-      setVia(null);
+  // Colour every option by what it would lead to: the core teaching aid.
+  const overlays: Overlay[] = useMemo(() => {
+    if (!opts || !selPiece) return [];
+    const out: Overlay[] = [];
+    if (oneTwoMode) {
+      for (const q of opts.oneTwos) out.push({ cell: q.pos, kind: 'oneTwo' });
+      return out;
     }
-  }, [state, selPiece, myTurn]);
-
-  // A pending restart: hand the human the taker, ready to play the ball.
-  const rs = state.restart;
-  useEffect(() => {
-    if (myTurn && rs && rs.side === state.turn && !sel) {
-      setSel(rs.takerId);
-      setMode('pass');
+    for (const to of opts.moves) {
+      const after = resolveAction(state, { type: 'move', pieceId: selPiece.id, to });
+      const lost = state.ball.carrier === selPiece.id && after.ball.carrier !== selPiece.id;
+      const won = state.ball.carrier !== null && getPiece(state, state.ball.carrier)!.side !== selPiece.side && after.ball.carrier === selPiece.id;
+      out.push({ cell: to, kind: lost ? 'moveDanger' : won ? 'moveTackle' : 'move' });
     }
-  }, [myTurn, rs, state.turn, sel]);
-
-  const avail = useMemo(() => {
-    if (!selPiece || !myTurn) return null;
-    return {
-      move: moveTargets(state, selPiece.id),
-      pass: passTargets(state, selPiece.id),
-      shoot: shotTargets(state, selPiece.id),
-      tackle: tackleTargets(state, selPiece.id).map((p) => p.pos),
-      oneTwo: oneTwoPartners(state, selPiece.id).map((p) => p.pos),
-    };
-  }, [state, selPiece, myTurn]);
-
-  const runTargets = useMemo(
-    () => (selPiece && via && mode === 'oneTwo' ? oneTwoTargets(state, selPiece.id, via) : []),
-    [state, selPiece, via, mode],
-  );
-
-  // Laws Mode teaching aid: show the offside line while choosing a pass (not from throw-ins, goal kicks or corners).
-  const exemptRestart = !!rs && rs.type !== 'indirectFreeKick' && rs.side === state.turn;
-  const showOffside = state.mode === 'laws' && mode === 'pass' && !!selPiece && state.ball.carrier === selPiece.id && !exemptRestart;
-
-  const overlays: Overlay[] = [];
-  if (avail && selPiece) {
-    if (mode === 'move') avail.move.forEach((cell) => overlays.push({ cell, kind: 'move' }));
-    if (mode === 'pass')
-      avail.pass.forEach((cell) => {
-        const p = pieceAt(state, cell);
-        overlays.push({ cell, kind: !onBoard(cell) ? 'out' : p ? 'pass' : 'space' });
-      });
-    if (mode === 'shoot') avail.shoot.forEach((cell) => overlays.push({ cell, kind: 'shot' }));
-    if (mode === 'tackle') avail.tackle.forEach((cell) => overlays.push({ cell, kind: 'tackle' }));
-    if (mode === 'oneTwo') {
-      if (!via) avail.oneTwo.forEach((cell) => overlays.push({ cell, kind: 'via' }));
-      else runTargets.forEach((cell) => overlays.push({ cell, kind: 'run' }));
+    for (const q of opts.passes) {
+      const r = passOutcome(state, selPiece, q.pos).result;
+      out.push({ cell: q.pos, kind: r === 'complete' ? 'pass' : r === 'offside' ? 'passOffside' : 'passLost' });
     }
-  }
-  const pendingCell = pending && pending.type !== 'endTurn' ? actionCell(state, pending) : null;
-  if (pendingCell) overlays.push({ cell: pendingCell, kind: 'pending' });
+    return out;
+  }, [opts, selPiece, oneTwoMode, state]);
+
+  const pendingCell = pending && (pending.type === 'move' || pending.type === 'pass') ? pending.to : pending?.type === 'oneTwo' ? getPiece(state, pending.viaId)?.pos : null;
+  const allOverlays = pendingCell ? [...overlays, { cell: pendingCell, kind: 'pending' as const }] : overlays;
 
   const buildAction = (cell: Cell): Action | null => {
-    if (!selPiece || !avail) return null;
-    const id = selPiece.id;
-    const has = (list: Cell[]) => list.some((c) => sameCell(c, cell));
-    switch (mode) {
-      case 'move':
-        return has(avail.move) ? { type: 'move', pieceId: id, to: cell } : null;
-      case 'pass':
-        return has(avail.pass) ? { type: 'pass', pieceId: id, to: cell } : null;
-      case 'shoot':
-        return has(avail.shoot) ? { type: 'shoot', pieceId: id, target: cell } : null;
-      case 'tackle': {
-        const t = pieceAt(state, cell);
-        return t && has(avail.tackle) ? { type: 'tackle', pieceId: id, targetId: t.id } : null;
-      }
-      case 'oneTwo':
-        return via && has(runTargets) ? { type: 'oneTwo', pieceId: id, viaId: via, to: cell } : null;
+    if (!selPiece || !opts) return null;
+    if (oneTwoMode) {
+      const q = opts.oneTwos.find((x) => sameCell(x.pos, cell));
+      return q ? { type: 'oneTwo', pieceId: selPiece.id, viaId: q.id } : null;
     }
+    if (opts.moves.some((c) => sameCell(c, cell))) return { type: 'move', pieceId: selPiece.id, to: cell };
+    if (opts.passes.some((q) => sameCell(q.pos, cell))) return { type: 'pass', pieceId: selPiece.id, to: cell };
+    return null;
   };
 
   const commit = (a: Action) => {
@@ -219,9 +210,7 @@ export function MatchView({ state, onAction, humanSides, busy, theme, kits, bann
       setError((e as Error).message);
     }
     setPending(null);
-    setVia(null);
-    if (a.type !== 'move') setSel(null);
-    else if (state.ball.carrier === a.pieceId) setMode('pass');
+    setOneTwoMode(false);
   };
 
   const onCell = (cell: Cell) => {
@@ -229,36 +218,34 @@ export function MatchView({ state, onAction, humanSides, busy, theme, kits, bann
     setError(null);
     if (pending && pendingCell && sameCell(pendingCell, cell)) return commit(pending);
     const a = buildAction(cell);
-    if (a) {
-      if (a.type === 'move') return commit(a);
-      setPending(a);
-      return;
-    }
-    if (mode === 'oneTwo' && selPiece && !via && avail?.oneTwo.some((c) => sameCell(c, cell))) {
-      setVia(pieceAt(state, cell)!.id);
-      return;
-    }
+    if (a) return setPending(a);
     const p = pieceAt(state, cell);
-    if (p && p.side === state.turn) {
+    if (p && p.side === state.turn && !forced) {
       setSel(p.id === sel ? null : p.id);
       setPending(null);
-      setVia(null);
-      const carrier = state.ball.carrier === p.id;
-      setMode(carrier && moveTargets(state, p.id).length === 0 ? 'pass' : 'move');
+      setOneTwoMode(false);
       return;
     }
-    setSel(null);
+    if (!forced) setSel(null);
     setPending(null);
-    setVia(null);
   };
 
   const hoverAction = !pending && hover ? buildAction(hover) : null;
-  const shown = pending ?? (hoverAction && hoverAction.type !== 'move' ? hoverAction : null);
+  const shown = pending ?? hoverAction;
   const preview = shown ? previewAction(state, shown) : [];
 
-  const recent = state.events.slice(-7).reverse();
-  const minute = matchMinute(state);
-  const st = selPiece ? ROLE_STATS[selPiece.role] : null;
+  const carrier = carrierOf(state);
+  const teachPass = !!selPiece && !!opts && state.ball.carrier === selPiece.id && (opts.passes.length > 0 || oneTwoMode);
+  const lineValue = teachPass ? offsideLine(state, selPiece!.side) : null;
+  const flagged =
+    teachPass && selPiece ? state.pieces.filter((q) => q.side === selPiece.side && q.id !== selPiece.id && isOffside(state, selPiece, q)).map((q) => q.id) : [];
+  const zone = selPiece && carrier?.id === selPiece.id ? selPiece.side : null;
+  const shotPreview =
+    pending?.type === 'shoot' && selPiece ? (() => { const r = shotOutcome(state, selPiece); return { from: selPiece.pos, path: r.path, outcome: r.outcome }; })() : null;
+
+  const turnFrac = Math.max(0, Math.min(1, state.clock.turnMs / TURN_MS));
+  const warn = state.clock.turnMs <= TURN_WARNING_MS;
+  const recent = state.events.slice(-8).reverse();
 
   return (
     <div className="match">
@@ -277,7 +264,11 @@ export function MatchView({ state, onAction, humanSides, busy, theme, kits, bann
           <span className="swatch" />
         </div>
         <div className="clock">
-          {state.phase === 'finished' ? 'FT' : `${state.half === 1 ? '1st' : '2nd'} half · ${String(minute).padStart(2, '0')}′`}
+          {state.phase === 'finished'
+            ? 'Full-time'
+            : state.phase === 'halftime'
+              ? 'Half-time'
+              : `${state.half === 1 ? '1st' : '2nd'} half · ${state.timed ? clockText(state.clock.halfMs) + ' left' : 'untimed'}${state.kickoffPending ? ' · kickoff' : ''}`}
         </div>
       </div>
 
@@ -288,96 +279,94 @@ export function MatchView({ state, onAction, humanSides, busy, theme, kits, bann
             theme={theme}
             kits={kits}
             selected={sel}
-            overlays={overlays}
+            overlays={allOverlays}
             onCell={onCell}
             onHover={setHover}
-            offside={showOffside && selPiece ? { side: selPiece.side, line: offsideLine(state, selPiece.side) } : null}
-            flagged={showOffside && selPiece ? offsidePositions(state, selPiece).map((p) => p.id) : []}
-            restartSpot={rs?.spot ?? null}
+            offside={lineValue !== null && selPiece ? { side: selPiece.side, line: lineValue } : null}
+            flagged={flagged}
+            zone={zone}
+            shot={shotPreview}
           />
         </div>
 
         <aside className="panel">
           {banner}
           <div className={`turn-chip ${state.turn}`} style={{ '--kit': kits[state.turn].fill } as React.CSSProperties}>
-            {state.phase === 'finished' ? (
-              'Full-time'
+            {state.phase !== 'playing' ? (
+              state.phase === 'halftime' ? 'Half-time' : 'Full-time'
             ) : (
               <>
                 <span className="swatch" />
                 <span>
-                  {TEAM_NAMES[state.turn]} to play
-                  {!humanSides.includes(state.turn) ? (busy ? ' · thinking…' : '') : ''}
+                  {TEAM_NAMES[state.turn]} to play{!humanSides.includes(state.turn) && busy ? ' · thinking…' : ''}
                 </span>
-                <span className="pips" aria-label={`${state.actionsLeft} actions left`}>
-                  {Array.from({ length: RULES.actionsPerTurn }, (_, i) => (
-                    <i key={i} className={i < state.actionsLeft ? 'on' : ''} />
-                  ))}
-                </span>
+                {state.timed && clockMode === 'realtime' && !state.kickoffPending && (
+                  <span className={`turn-timer ${warn ? 'warn' : ''}`} aria-label={`${Math.ceil(state.clock.turnMs / 1000)} seconds left this turn`}>
+                    <i style={{ width: `${turnFrac * 100}%` }} />
+                    <b className="mono">{Math.ceil(state.clock.turnMs / 1000)}s</b>
+                  </span>
+                )}
               </>
             )}
           </div>
+          {controls}
           {statusNote && <p className="note">{statusNote}</p>}
-          {rs && state.phase === 'playing' && (
-            <div className="callout">
-              <div className="eyebrow">{LAW_NAMES[rs.type]}</div>
-              <strong>
-                {RESTART_NAMES[rs.type]} to {TEAM_NAMES[rs.side]}
-              </strong>
-              <p>{RESTART_HELP[rs.type]}</p>
-              {rs.side !== state.turn && <p className="hint">{TEAM_NAMES[state.turn]} can reposition first. The ball is out of play until the kick is taken, so no tackles.</p>}
-            </div>
+
+          {myTurn && !selPiece && <p className="hint">Select one of your pieces. A turn is one piece: move it, then pass or shoot with it if the rules allow.</p>}
+          {myTurn && state.kickoffPending && <p className="hint">Kickoff: your Frontliner must pass first. Tap a teammate in a straight or diagonal line.</p>}
+          {myTurn && state.followUp && (
+            <p className="hint">
+              Follow-up: this piece may {state.followUp.canPass ? 'pass' : ''}
+              {state.followUp.canPass && state.followUp.canShoot ? ' or ' : ''}
+              {state.followUp.canShoot ? 'shoot' : ''}, or end the turn.
+            </p>
           )}
 
-          {myTurn && !selPiece && <p className="hint">Select one of your pieces. You have {state.actionsLeft} action{state.actionsLeft === 1 ? '' : 's'} left.</p>}
-
-          {selPiece && st && avail && (
+          {selPiece && opts && (
             <div className="piece-card">
               <div className="piece-head">
                 <strong>{ROLE_NAMES[selPiece.role]}</strong>
                 <span className="mono">{cellName(selPiece.pos)}</span>
               </div>
-              <dl className="stats">
-                <div><dt>Move</dt><dd>{st.move}</dd></div>
-                <div><dt>Pass</dt><dd>{st.pass}</dd></div>
-                <div><dt>Shot</dt><dd>{st.shot}</dd></div>
-                <div><dt>Tackle</dt><dd>{st.tackle}</dd></div>
-                <div><dt>Control</dt><dd>{st.control}</dd></div>
-                {st.save !== undefined && <div><dt>Save</dt><dd>{st.save}</dd></div>}
-              </dl>
-              <div className="modes" role="group" aria-label="Action">
-                {(Object.keys(MODE_LABEL) as Mode[]).map((m) => {
-                  const n = avail[m].length;
-                  return (
-                    <button
-                      key={m}
-                      type="button"
-                      className={m === mode ? 'active' : ''}
-                      disabled={n === 0}
-                      onClick={() => {
-                        setMode(m);
-                        setPending(null);
-                        setVia(null);
-                      }}
-                    >
-                      {MODE_LABEL[m]}
-                    </button>
-                  );
-                })}
+              <p className="hint">{ROLE_SUMMARY[selPiece.role]}</p>
+              <div className="modes" role="group" aria-label="Actions">
+                <button type="button" className={!oneTwoMode ? 'active' : ''} onClick={() => { setOneTwoMode(false); setPending(null); }}>
+                  Move / pass
+                </button>
+                <button type="button" disabled={!opts.shoot} onClick={() => { setOneTwoMode(false); setPending({ type: 'shoot', pieceId: selPiece.id }); }}>
+                  Shoot
+                </button>
+                <button type="button" className={oneTwoMode ? 'active' : ''} disabled={opts.oneTwos.length === 0} onClick={() => { setOneTwoMode(true); setPending(null); }}>
+                  One-two
+                </button>
               </div>
-              <p className="hint">{modeHint(mode, !!via)}</p>
+              <ul className="legend">
+                <li><i className="lg-move" /> move</li>
+                <li><i className="lg-danger" /> lose the ball</li>
+                <li><i className="lg-tackle" /> win the ball</li>
+                <li><i className="lg-pass" /> safe pass</li>
+                <li><i className="lg-lost" /> pass lost</li>
+                <li><i className="lg-off" /> offside</li>
+              </ul>
             </div>
           )}
 
           {shown && (
             <div className="preview">
-              <div className="eyebrow">{pending ? 'Confirm action' : 'Preview'}</div>
-              {preview.length === 0 ? <p>No effect.</p> : preview.filter((e) => e.kind !== 'kickoff').slice(0, 3).map((e, i) => (
-                <p key={i} className={`ev ${EVENT_TONE[e.kind] ?? ''}`}>
-                  {e.text}
-                  {e.law && <span className="law">{e.law}</span>}
-                </p>
-              ))}
+              <div className="eyebrow">{pending ? 'Confirm' : 'Preview'}</div>
+              {preview.length === 0 ? (
+                <p>No effect.</p>
+              ) : (
+                preview
+                  .filter((e) => e.kind !== 'kickoff')
+                  .slice(0, 3)
+                  .map((e, i) => (
+                    <p key={i} className={`ev ${EVENT_TONE[e.kind] ?? ''}`}>
+                      {e.text}
+                      {e.rule && <span className="law">{e.rule}</span>}
+                    </p>
+                  ))
+              )}
               {pending && (
                 <div className="row">
                   <button type="button" className="btn primary" onClick={() => commit(pending)}>Confirm</button>
@@ -389,9 +378,9 @@ export function MatchView({ state, onAction, humanSides, busy, theme, kits, bann
 
           {error && <p className="error">{error}</p>}
 
-          {myTurn && (
+          {myTurn && !state.kickoffPending && (
             <button type="button" className="btn end" onClick={() => commit({ type: 'endTurn' })}>
-              End turn
+              {state.followUp ? 'End turn' : 'Pass the turn'}
             </button>
           )}
 
@@ -400,10 +389,10 @@ export function MatchView({ state, onAction, humanSides, busy, theme, kits, bann
             <ol>
               {recent.map((e, i) => (
                 <li key={state.events.length - i} className={`ev ${EVENT_TONE[e.kind] ?? ''}`}>
-                  <span className={`dot ${e.side}`} style={{ background: kits[e.side].fill }} />
+                  <span className="dot" style={{ background: kits[e.side].fill }} />
                   <span>
                     {e.text}
-                    {e.law && <span className="law">{e.law}</span>}
+                    {e.rule && <span className="law">{e.rule}</span>}
                   </span>
                 </li>
               ))}
@@ -415,32 +404,38 @@ export function MatchView({ state, onAction, humanSides, busy, theme, kits, bann
   );
 }
 
-function actionCell(s: GameState, a: Action): Cell | null {
-  switch (a.type) {
-    case 'move':
-    case 'pass':
-    case 'oneTwo':
-      return a.to;
-    case 'shoot':
-      return a.target;
-    case 'tackle':
-      return getPiece(s, a.targetId)?.pos ?? null;
-    default:
-      return null;
-  }
+/** Match statistics table (rule 7.2 and 8.4 track these separately). */
+export function StatsTable({ state }: { state: GameState }) {
+  const rows: [string, keyof GameState['stats']['home']][] = [
+    ['Shots', 'shots'],
+    ['On target', 'shotsOnTarget'],
+    ['Saves', 'saves'],
+    ['Blocks', 'blocks'],
+    ['Passes completed', 'passesCompleted'],
+    ['Interceptions', 'interceptions'],
+    ['Tackles', 'tackles'],
+    ['Reactive tackles', 'reactiveTackles'],
+    ['Offsides', 'offsides'],
+  ];
+  return (
+    <table className="stats-table">
+      <thead>
+        <tr>
+          <th>{TEAM_NAMES.home}</th>
+          <th />
+          <th>{TEAM_NAMES.away}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map(([label, k]) => (
+          <tr key={k}>
+            <td className="mono">{state.stats.home[k]}</td>
+            <th>{label}</th>
+            <td className="mono">{state.stats.away[k]}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
 }
 
-function modeHint(m: Mode, via: boolean) {
-  switch (m) {
-    case 'move':
-      return 'Tap a white dot to move. The ball carrier dribbles 1 cell less.';
-    case 'pass':
-      return 'Tap a teammate (ring) or open space (square). Passes over 4 cells are lofted. In Laws Mode, orange diamonds put the ball out of play.';
-    case 'shoot':
-      return 'Tap a gold goal-mouth cell to aim your shot.';
-    case 'tackle':
-      return 'Tap the ball carrier. Teammates beside them add +1 each.';
-    case 'oneTwo':
-      return via ? 'Now tap a gold dot: where you run to collect the return pass.' : 'Tap the teammate to play the one-two with.';
-  }
-}

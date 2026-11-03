@@ -1,199 +1,171 @@
-import { RULES } from './config';
-import { attackDir, dist, goalTargets, onBoard, opponent, progress } from './geometry';
-import {
-  carrierOf,
-  moveTargets,
-  oneTwoPartners,
-  oneTwoTargets,
-  passTargets,
-  pieceAt,
-  resolveAction,
-  shotOutcome,
-  stats,
-  tackleOdds,
-  validateAction,
-} from './rules';
-import type { Action, Cell, GameState, Piece, Side } from './types';
+import { adjacent, canShootFrom, dist, inOwnHalf, opponent, progress } from './board';
+import { actionsFor, carrierOf, hasSafePass, passOutcome, passTargets, resolveAction, shotOutcome } from './rules';
+import type { Action, GameState, Side } from './types';
 
-export type Difficulty = 'rookie' | 'pro' | 'legend';
+/**
+ * CPU opponent for the official rules (rule 10). It uses the same validators as
+ * human play, so it can never make an illegal move.
+ *  - Beginner: no lookahead; picks among its best few plans with a little noise.
+ *  - Baller:   one-ply lookahead: its plan, then the human's best reply.
+ *  - Master:   two-ply: its plan, the reply, then its own best follow-up. Deterministic.
+ * As in the original notes, the CPU does not play one-twos.
+ */
+export type Difficulty = 'beginner' | 'baller' | 'master';
 
-export const DIFFICULTIES: Record<Difficulty, { label: string; beam: number; lookahead: boolean; blurb: string }> = {
-  rookie: { label: 'Beginner', beam: 1, lookahead: false, blurb: 'Plays one action at a time. Good for learning.' },
-  pro: { label: 'Baller', beam: 4, lookahead: true, blurb: 'Plans whole turns and protects the ball.' },
-  legend: { label: 'Master', beam: 10, lookahead: true, blurb: 'Searches deeply and punishes loose play.' },
+export const DIFFICULTIES: Record<Difficulty, { label: string; blurb: string }> = {
+  beginner: { label: 'Beginner', blurb: 'No lookahead and a little randomness. Forgiving.' },
+  baller: { label: 'Baller', blurb: 'Looks one reply ahead.' },
+  master: { label: 'Master', blurb: 'Looks two moves ahead. No randomness.' },
 };
 
-/** Every action worth considering for the side to move. */
-export function candidateActions(s: GameState): Action[] {
-  const out: Action[] = validateAction(s, { type: 'endTurn' }) ? [] : [{ type: 'endTurn' }];
-  if (s.phase !== 'playing') return out;
+interface Plan {
+  actions: Action[];
+  state: GameState;
+}
+
+/** Every complete turn the side to play could take (without one-twos). */
+export function turnPlans(s: GameState): Plan[] {
+  const plans: Plan[] = [];
+  if (s.phase !== 'playing') return plans;
   const side = s.turn;
-  const carrier = carrierOf(s);
-  const mine = s.pieces.filter((p) => p.side === side);
-
-  for (const p of mine) for (const to of moveTargets(s, p.id)) out.push({ type: 'move', pieceId: p.id, to });
-
-  if (carrier && carrier.side === side) {
-    const range = stats(carrier).pass;
-    const dir = attackDir(side);
-    const seen = new Set<string>();
-    const addPass = (to: Cell) => {
-      const k = `${to.c},${to.r}`;
-      if (seen.has(k)) return;
-      seen.add(k);
-      const a: Action = { type: 'pass', pieceId: carrier.id, to };
-      if (dist(carrier.pos, to) <= range && !validateAction(s, a)) out.push(a);
-    };
-    for (const q of mine) {
-      if (q.id === carrier.id) continue;
-      addPass(q.pos);
-      // Through balls into space just ahead of teammates.
-      for (const dc of [-1, 0, 1]) {
-        const ahead = { c: q.pos.c + dc, r: q.pos.r + dir };
-        if (onBoard(ahead) && !pieceAt(s, ahead)) addPass(ahead);
-      }
+  const add = (actions: Action[], state: GameState) => plans.push({ actions, state });
+  for (const p of s.pieces) {
+    if (p.side !== side) continue;
+    const o = actionsFor(s, p);
+    for (const q of o.passes) {
+      const a: Action = { type: 'pass', pieceId: p.id, to: q.pos };
+      add([a], resolveAction(s, a));
     }
-    // Laws Mode: clearing into touch is a legitimate way out of trouble.
-    if (s.mode === 'laws')
-      for (const c of [-1, RULES.cols])
-        for (let dr = -2; dr <= 2; dr++) {
-          const to = { c, r: carrier.pos.r + dr * dir };
-          const a: Action = { type: 'pass', pieceId: carrier.id, to };
-          if (!validateAction(s, a)) out.push(a);
+    if (o.shoot) {
+      const a: Action = { type: 'shoot', pieceId: p.id };
+      add([a], resolveAction(s, a));
+    }
+    for (const to of o.moves) {
+      const m: Action = { type: 'move', pieceId: p.id, to };
+      const ns = resolveAction(s, m);
+      if (ns.followUp && ns.followUp.pieceId === p.id && ns.turn === side) {
+        const end: Action = { type: 'endTurn' };
+        add([m, end], resolveAction(ns, end));
+        const mp = ns.pieces.find((x) => x.id === p.id)!;
+        const fo = actionsFor(ns, mp);
+        for (const q of fo.passes) {
+          const a: Action = { type: 'pass', pieceId: p.id, to: q.pos };
+          add([m, a], resolveAction(ns, a));
         }
-    for (const t of goalTargets(side)) {
-      const a: Action = { type: 'shoot', pieceId: carrier.id, target: t };
-      if (!validateAction(s, a)) out.push(a);
+        if (fo.shoot) {
+          const a: Action = { type: 'shoot', pieceId: p.id };
+          add([m, a], resolveAction(ns, a));
+        }
+      } else add([m], ns);
     }
-    for (const via of oneTwoPartners(s, carrier.id))
-      for (const to of oneTwoTargets(s, carrier.id, via.id))
-        if (progress(side, to.r) > progress(side, carrier.pos.r))
-          out.push({ type: 'oneTwo', pieceId: carrier.id, viaId: via.id, to });
   }
-
-  // A pending restart must be taken: make sure at least one way to take it is on the list.
-  if (s.restart && s.restart.side === side && carrier && !out.some((a) => a.type === 'pass' || a.type === 'shoot'))
-    for (const to of passTargets(s, carrier.id)) out.push({ type: 'pass', pieceId: carrier.id, to });
-
-  if (carrier && carrier.side !== side && !s.restart)
-    for (const p of mine)
-      if (!p.tackled && dist(p.pos, carrier.pos) === 1) out.push({ type: 'tackle', pieceId: p.id, targetId: carrier.id });
-
-  return out;
-}
-
-/** Can `attacker` score from where its ball carrier stands right now? */
-function canScoreNow(s: GameState, carrier: Piece): boolean {
-  return goalTargets(carrier.side).some(
-    (t) => dist(carrier.pos, t) <= RULES.maxShotDistance && shotOutcome(s, carrier, t).outcome === 'goal',
-  );
-}
-
-/** Opponents within reach who could step in and win a tackle against the carrier next turn. */
-function tackleThreat(s: GameState, carrier: Piece): number {
-  let threat = 0;
-  for (const q of s.pieces) {
-    if (q.side === carrier.side) continue;
-    const d = dist(q.pos, carrier.pos);
-    if (d === 0 || d > stats(q).move + 1) continue;
-    const odds = tackleOdds(s, q, carrier);
-    // Being next to the carrier already counts toward support; approximate by the raw duel.
-    if (odds.wins || stats(q).tackle + 1 > odds.defend) threat += d === 1 ? 2 : 1;
+  if (!s.kickoffPending && !s.followUp) {
+    const end: Action = { type: 'endTurn' };
+    add([end], resolveAction(s, end));
   }
-  return threat;
+  return plans;
 }
 
-/** Static evaluation of a position from `side`'s point of view. Higher is better. */
-export function evaluate(s: GameState, side: Side, lookahead: boolean): number {
+/** Static evaluation of a position from `side`'s point of view. */
+export function evaluate(s: GameState, side: Side): number {
   const opp = opponent(side);
   let v = (s.score[side] - s.score[opp]) * 10000;
   if (s.phase === 'finished') return v;
-
   const carrier = carrierOf(s);
-  const ballProgress = progress(side, s.ball.pos.r);
+  const mine = s.pieces.filter((p) => p.side === side);
+  const theirs = s.pieces.filter((p) => p.side === opp);
 
   if (carrier && carrier.side === side) {
-    v += 400 + ballProgress * 15;
-    if (lookahead) {
-      v -= tackleThreat(s, carrier) * 70;
-      if (canScoreNow(s, carrier)) v += 250;
-    }
+    v += 500 + progress(side, carrier.pos.r) * 26;
+    if (canShootFrom(side, carrier.pos)) v += shotOutcome(s, carrier).outcome === 'goal' ? 1100 : 220;
+    // Pressure on the carrier and options to keep the ball.
+    const near = theirs.filter((q) => dist(q.pos, carrier.pos) <= 2).length;
+    v -= near * 30;
+    if (theirs.filter((q) => adjacent(q.pos, carrier.pos)).length >= 2) v -= 120;
+    let safe = 0;
+    for (const q of passTargets(s, carrier))
+      if (passOutcome(s, carrier, q.pos).result === 'complete') {
+        safe++;
+        if (safe >= 4) break;
+      }
+    v += safe * 14;
   } else if (carrier) {
-    v -= 400 + (RULES.rows - 1 - ballProgress) * 10;
-    // Pressure the carrier and stay between ball and goal.
+    v -= 500 + progress(opp, carrier.pos.r) * 22;
+    if (canShootFrom(opp, carrier.pos)) v -= shotOutcome(s, carrier).outcome === 'goal' ? 1300 : 200;
     let nearest = 99;
-    for (const p of s.pieces) if (p.side === side) nearest = Math.min(nearest, dist(p.pos, carrier.pos));
-    v -= nearest * 12;
-    if (lookahead && canScoreNow(s, carrier)) v -= 900;
-  } else {
-    let mineD = 99;
-    let theirD = 99;
-    for (const p of s.pieces) {
-      const d = dist(p.pos, s.ball.pos);
-      if (p.side === side) mineD = Math.min(mineD, d);
-      else theirD = Math.min(theirD, d);
-    }
-    v += (theirD - mineD) * 40 + ballProgress * 5;
+    for (const p of mine) nearest = Math.min(nearest, dist(p.pos, carrier.pos));
+    v -= nearest * 28;
+    v += Math.min(2, mine.filter((p) => adjacent(p.pos, carrier.pos)).length) * 55;
+    if (!hasSafePass(s, carrier)) v += 90;
   }
 
-  // Shape: keep some pieces goal-side of the ball and the keeper central.
+  // Shape: stay goal-side of the ball, keep defenders in their own half.
+  const ballProg = progress(side, s.ball.pos.r);
   let goalSide = 0;
-  for (const p of s.pieces) {
-    if (p.side !== side) continue;
-    if (p.role === 'GK') v -= Math.abs(p.pos.c - 7.5) * 6;
-    else if (progress(side, p.pos.r) < ballProgress) goalSide++;
-    // Mild pull forward for attackers when we have the ball.
-    if (carrier?.side === side && (p.role === 'FW' || p.role === 'WG' || p.role === 'AM'))
-      v += progress(side, p.pos.r) * 2;
+  for (const p of mine) {
+    if (p.role === 'GK') {
+      v -= Math.abs(p.pos.c - 7.5) * 6;
+      continue;
+    }
+    if (progress(side, p.pos.r) < ballProg) goalSide++;
+    if ((p.role === 'CB' || p.role === 'FB') && !inOwnHalf(side, p.pos)) v -= 15;
+    if (carrier?.side === side && (p.role === 'FW' || p.role === 'WG' || p.role === 'AM' || p.role === 'MF')) {
+      v += progress(side, p.pos.r) * 4;
+      if (canShootFrom(side, p.pos)) v += 40;
+    }
   }
-  v += Math.min(goalSide, 6) * 15;
+  v += Math.min(goalSide, 6) * 12;
   return v;
 }
 
-interface Line {
-  state: GameState;
-  actions: Action[];
-  score: number;
+/** Small deterministic noise from the position, so "random" CPU play is still reproducible. */
+function noise(s: GameState, i: number, amp: number) {
+  let h = s.turnNumber * 2654435761 + i * 40503;
+  for (const p of s.pieces) h = (h ^ (p.pos.c * 31 + p.pos.r * 17)) * 16777619;
+  return ((h >>> 0) % 1000) / 1000 * amp - amp / 2;
 }
 
-/**
- * Pick the CPU's whole turn with a beam search over action sequences.
- * Deterministic: the same position always produces the same plan.
- */
-export function planTurn(s: GameState, difficulty: Difficulty = 'pro'): Action[] {
-  const side = s.turn;
-  const { beam, lookahead } = DIFFICULTIES[difficulty];
-  const finals: Line[] = [];
-  let beams: Line[] = [{ state: s, actions: [], score: evaluate(s, side, lookahead) }];
+/** Value of `s` for `side` after the opponent picks its best reply. */
+function afterBestReply(s: GameState, side: Side, ownFollowUp: boolean): number {
+  if (s.phase !== 'playing' || s.turn === side) return ownFollowUp ? bestPlanValue(s, side) : evaluate(s, side);
+  const replies = turnPlans(s);
+  if (!replies.length) return evaluate(s, side);
+  const opp = opponent(side);
+  // The opponent picks its best plan by its own evaluation.
+  replies.sort((a, b) => evaluate(b.state, opp) - evaluate(a.state, opp));
+  if (!ownFollowUp) return evaluate(replies[0].state, side);
+  let worst = Infinity;
+  for (const r of replies.slice(0, 4)) worst = Math.min(worst, bestPlanValue(r.state, side));
+  return worst;
+}
 
-  for (let depth = 0; depth < RULES.actionsPerTurn && beams.length; depth++) {
-    const next: Line[] = [];
-    for (const b of beams) {
-      if (b.state.turn !== side || b.state.phase !== 'playing' || b.state.turnsPlayed !== s.turnsPlayed || b.state.half !== s.half) {
-        finals.push(b);
-        continue;
-      }
-      for (const a of candidateActions(b.state)) {
-        const ns = resolveAction(b.state, a);
-        const line: Line = { state: ns, actions: [...b.actions, a], score: evaluate(ns, side, lookahead) };
-        if (a.type === 'endTurn') finals.push(line);
-        else next.push(line);
-      }
+function bestPlanValue(s: GameState, side: Side): number {
+  if (s.phase !== 'playing' || s.turn !== side) return evaluate(s, side);
+  let best = -Infinity;
+  for (const p of turnPlans(s)) best = Math.max(best, evaluate(p.state, side));
+  return best === -Infinity ? evaluate(s, side) : best;
+}
+
+/** Choose the CPU's actions for this turn. */
+export function planTurn(s: GameState, difficulty: Difficulty = 'baller'): Action[] {
+  const side = s.turn;
+  const plans = turnPlans(s);
+  if (!plans.length) return [{ type: 'endTurn' }];
+  const scored = plans.map((p, i) => ({ p, v: evaluate(p.state, side) + (difficulty === 'master' ? 0 : noise(s, i, difficulty === 'beginner' ? 160 : 30)) }));
+  scored.sort((a, b) => b.v - a.v);
+  if (difficulty === 'beginner') {
+    const top = scored.slice(0, 4);
+    return top[Math.floor(Math.abs(noise(s, 99, 1) + 0.5) * top.length) % top.length].p.actions;
+  }
+  const width = difficulty === 'master' ? 6 : 10;
+  let best = scored[0];
+  let bestV = -Infinity;
+  for (const c of scored.slice(0, width)) {
+    const v = afterBestReply(c.p.state, side, difficulty === 'master') + (difficulty === 'baller' ? noise(c.p.state, 7, 30) : 0);
+    if (v > bestV) {
+      bestV = v;
+      best = c;
     }
-    next.sort((x, y) => y.score - x.score);
-    beams = next.slice(0, beam);
   }
-  finals.push(...beams);
-  let best = finals[0];
-  for (const f of finals) if (f.score > best.score) best = f;
-  const plan = best ? best.actions.slice() : [];
-  // Make sure the plan finishes the turn.
-  const last = plan[plan.length - 1];
-  if (!last || last.type !== 'endTurn') {
-    let st = s;
-    for (const a of plan) st = resolveAction(st, a);
-    if (st.turn === side && st.phase === 'playing' && st.turnsPlayed === s.turnsPlayed && st.half === s.half && !validateAction(st, { type: 'endTurn' }))
-      plan.push({ type: 'endTurn' });
-  }
-  return plan;
+  return best.p.actions;
 }

@@ -1,5 +1,7 @@
 # SYNOCHÍ Laws Mode: rules specification
 
+> **Status: superseded.** The game now follows David André's official rules ([OFFICIAL_RULES_IMPLEMENTATION.md](OFFICIAL_RULES_IMPLEMENTATION.md)). This document and its code (git commit `5e19cbe`) are kept as a proposal for an optional "Laws of the Game" teaching variant.
+
 SYNOCHÍ is David André's project. Laws Mode makes the game a way to *learn* football's real rules: every call names the Law it comes from. The rules follow the **Laws of the Game published by IFAB** (FIFA is one of IFAB's members). In marketing, say "follows the official Laws of the Game" rather than "FIFA rules", because FIFA is a protected trademark, and explain the Laws in our own words rather than copying IFAB's text.
 
 Quick Play keeps the simplified rules (no offside, the ball never goes out) for casual games.

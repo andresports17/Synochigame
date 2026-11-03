@@ -1,9 +1,10 @@
 /**
- * SYNOCHÍ match server.
+ * SYNOCHÍ match server (official rules).
  *
  * - Serves the built web app (dist/).
- * - Runs online invite-code matches. The server owns the game state: every
- *   action is validated by the shared rules engine before it is applied.
+ * - Runs online invite-code matches. The server owns the game state and the
+ *   real-time clocks (rule 9): every action is validated by the shared rules
+ *   engine, and elapsed time is applied as clock ticks before each request.
  * - Verifies finished matches by replaying the action log (POST /api/verify),
  *   which is how rewards should be granted once currencies move server-side.
  *
@@ -34,6 +35,7 @@ interface OnlineMatch {
   setup?: MatchSetup;
   state?: GameState;
   log: Action[];
+  lastTick: number;
   createdAt: number;
   updatedAt: number;
 }
@@ -51,10 +53,29 @@ const newCode = () => {
 const newToken = () => randomBytes(16).toString('hex');
 const validFormation = (f: unknown): string => (typeof f === 'string' && FORMATION_NAMES.includes(f) ? f : '4-3-3');
 
-function isAction(a: unknown): a is Action {
+/** Actions a player may send. Clock ticks come only from the server. */
+function isPlayerAction(a: unknown): a is Action {
   if (!a || typeof a !== 'object') return false;
   const t = (a as { type?: unknown }).type;
-  return t === 'move' || t === 'pass' || t === 'shoot' || t === 'tackle' || t === 'oneTwo' || t === 'endTurn';
+  return t === 'move' || t === 'pass' || t === 'shoot' || t === 'oneTwo' || t === 'endTurn' || t === 'resume';
+}
+
+function isAction(a: unknown): a is Action {
+  return isPlayerAction(a) || (!!a && typeof a === 'object' && (a as { type?: unknown }).type === 'tick');
+}
+
+/** Apply the real time elapsed since the last request as a clock tick (logged, so replays match). */
+function catchUpClock(m: OnlineMatch) {
+  const now = Date.now();
+  if (m.state && m.state.phase === 'playing') {
+    const ms = now - m.lastTick;
+    if (ms > 0) {
+      const tick: Action = { type: 'tick', ms };
+      m.state = applyAction(m.state, tick);
+      m.log.push(tick);
+    }
+  }
+  m.lastTick = now;
 }
 
 export function createApp() {
@@ -72,6 +93,7 @@ export function createApp() {
       tokens: { home: token },
       formations: { home: validFormation(req.body?.formation) },
       log: [],
+      lastTick: now,
       createdAt: now,
       updatedAt: now,
     });
@@ -87,6 +109,7 @@ export function createApp() {
     m.formations.away = validFormation(req.body?.formation);
     m.setup = { homeFormation: m.formations.home!, awayFormation: m.formations.away };
     m.state = createMatch(m.setup);
+    m.lastTick = Date.now();
     m.updatedAt = Date.now();
     res.json({ code: m.code, token, side: 'away' });
   });
@@ -94,6 +117,7 @@ export function createApp() {
   app.get('/api/matches/:code', (req, res) => {
     const m = matches.get(req.params.code.toUpperCase());
     if (!m) return res.status(404).json({ error: 'Match not found' });
+    catchUpClock(m);
     res.json({ code: m.code, status: m.state ? m.state.phase : 'waiting', state: m.state ?? null, actions: m.log.length });
   });
 
@@ -102,9 +126,10 @@ export function createApp() {
     if (!m || !m.state) return res.status(404).json({ error: 'Match not started' });
     const side = (Object.keys(m.tokens) as Side[]).find((s) => m.tokens[s] === req.body?.token);
     if (!side) return res.status(403).json({ error: 'You are not a player in this match' });
-    if (m.state.turn !== side) return res.status(409).json({ error: 'It is not your turn' });
+    catchUpClock(m);
     const action = req.body?.action;
-    if (!isAction(action)) return res.status(400).json({ error: 'Malformed action' });
+    if (!isPlayerAction(action)) return res.status(400).json({ error: 'Malformed action' });
+    if (action.type !== 'resume' && m.state.turn !== side) return res.status(409).json({ error: 'It is not your turn' });
     try {
       m.state = applyAction(m.state, action);
       m.log.push(action);

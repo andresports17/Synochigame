@@ -319,3 +319,27 @@ button, input, select { font: inherit; color: inherit; }
 .quiz-options .btn.wrong { background: var(--bad); color: var(--bg); border-color: transparent; }
 .result .explain { color: var(--text); font-weight: 400; }
 .list-item.feature { border-color: var(--gold); }
+
+.turn-timer { margin-left: auto; position: relative; width: 92px; height: 20px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); overflow: hidden; display: flex; align-items: center; justify-content: center; }
+.turn-timer i { position: absolute; inset: 0 auto 0 0; background: var(--gold); opacity: 0.35; transition: width 0.25s linear; }
+.turn-timer b { position: relative; font-size: 12px; }
+.turn-timer.warn i { background: var(--bad); opacity: 0.55; }
+.turn-timer.warn b { color: var(--bad); }
+.modes { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.legend { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 12px; color: var(--muted); }
+.legend li { display: flex; align-items: center; gap: 5px; }
+.legend i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; border: 1px solid rgba(0,0,0,.3); }
+.lg-move { background: #e9edf5; }
+.lg-danger { background: #ff5a5a; }
+.lg-tackle { background: #5cf2a0; }
+.lg-pass { background: transparent; border: 2px solid #9fe0ff !important; }
+.lg-lost { background: transparent; border: 2px solid #ff5a5a !important; }
+.lg-off { background: transparent; border: 2px solid #ffd400 !important; }
+.stats-table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+.stats-table th, .stats-table td { padding: 4px 6px; border-bottom: 1px solid var(--line); text-align: center; }
+.stats-table tbody th { font-weight: 500; color: var(--muted); }
+.result .stats-table { color: var(--text); }
+.role-list { margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.role-list div { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
+.role-list dt { font-weight: 700; }
+.role-list dd { margin: 2px 0 0; color: var(--muted); font-size: 14px; }

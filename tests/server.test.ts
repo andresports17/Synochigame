@@ -29,11 +29,16 @@ describe('match server', () => {
     const early = await post(`/api/matches/${code}/actions`, { token: joined.json.token, action: { type: 'endTurn' } });
     expect(early.status).toBe(409);
 
-    // Illegal move is rejected by the engine.
-    const bad = await post(`/api/matches/${code}/actions`, { token: homeToken, action: { type: 'move', pieceId: 'H0', to: { c: 7, r: 20 } } });
+    // Illegal: the kickoff must be a pass.
+    const bad = await post(`/api/matches/${code}/actions`, { token: homeToken, action: { type: 'endTurn' } });
     expect(bad.status).toBe(422);
 
-    const ok = await post(`/api/matches/${code}/actions`, { token: homeToken, action: { type: 'endTurn' } });
+    // Clients cannot send clock ticks.
+    const tick = await post(`/api/matches/${code}/actions`, { token: homeToken, action: { type: 'tick', ms: 999999 } });
+    expect(tick.status).toBe(400);
+
+    // Kickoff pass: Frontliner (H9) to the Anchor (H5) straight behind it.
+    const ok = await post(`/api/matches/${code}/actions`, { token: homeToken, action: { type: 'pass', pieceId: 'H9', to: { c: 7, r: 17 } } });
     expect(ok.status).toBe(200);
     expect(ok.json.state.turn).toBe('away');
 
@@ -42,10 +47,16 @@ describe('match server', () => {
   });
 
   it('verifies a match log by replay', async () => {
-    const actions = Array.from({ length: 48 }, () => ({ type: 'endTurn' }));
+    const actions = [
+      { type: 'pass', pieceId: 'H9', to: { c: 7, r: 17 } },
+      { type: 'tick', ms: 300000 },
+      { type: 'resume' },
+      { type: 'pass', pieceId: 'A9', to: { c: 8, r: 6 } },
+      { type: 'tick', ms: 300000 },
+    ];
     const r = await post('/api/verify', { setup: { homeFormation: '4-3-3', awayFormation: '4-3-3' }, actions });
     expect(r.json).toMatchObject({ valid: true, finished: true, score: { home: 0, away: 0 } });
-    const cheat = await post('/api/verify', { setup: { homeFormation: '4-3-3', awayFormation: '4-3-3' }, actions: [{ type: 'shoot', pieceId: 'H9', target: { c: 7, r: 24 } }] });
+    const cheat = await post('/api/verify', { setup: { homeFormation: '4-3-3', awayFormation: '4-3-3' }, actions: [{ type: 'shoot', pieceId: 'H9' }] });
     expect(cheat.json.valid).toBe(false);
   });
 });

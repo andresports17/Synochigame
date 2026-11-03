@@ -6,7 +6,7 @@ SYNOCHÍ is David André's project. Sources: the commercial launch memo; the Dev
 
 **The Replit prototype is the product.** According to the brief it already has the full rules, a three-level CPU, online play, a 24-lesson tutorial, 13 drills, a formation editor, ranked tiers, missions, a season pass, four currencies, Stripe token packs, clubs, leaderboards, accounts and accessibility options.
 
-This repository (v0.1) is a separate, smaller rebuild written before the brief was available. Its rules are provisional and differ from the prototype (section 3). **Recommendation:** once the rules are settled, decide which code base goes to launch: the Replit prototype (far more features) or this repo (Laws Mode, tested engine, replay verification). Whichever is chosen, the other serves as a reference to check it against. Laws Mode is specified in [LAWS_MODE.md](LAWS_MODE.md) so it can be carried into either.
+This repository now implements the official rules from the Replit build (section 3) as a tested, deterministic engine with lessons, a rules quiz, CPU levels, online play with a server-side clock, and replay verification. The Replit prototype still has far more features (accounts, missions, season pass, shop, clubs, 24 lessons). **Recommendation:** use this engine's test suite to verify the prototype, rule by rule, and decide which code base goes to launch.
 
 ## 2. Concept art vs. the prototype (corrected)
 
@@ -24,23 +24,9 @@ This repository (v0.1) is a separate, smaller rebuild written before the brief w
 
 The image's board also has generation errors (repeated row numbers, "6" for "G"). It shows a 24-row by 16-column board, which matches the brief's 24 × 16 grid.
 
-## 3. Known rule differences: prototype vs. this v0.1
+## 3. Rules
 
-The brief gives the outline; the exact rules are on the Rules tab, which hasn't been shared.
-
-| Rule | Prototype (brief) | This v0.1 |
-|---|---|---|
-| Turn | One action per turn: a move, pass, shot or one-two | 3 actions per turn |
-| Clock | Two 5-minute real-time halves, 25 seconds per turn | Fixed number of turns per half |
-| Role movement | "Every role moves differently" | Same king-step pattern, different ranges |
-| Offside | Yes | Not implemented |
-| Rebounds | Yes | Not implemented |
-| Losing the ball | Tackles, blocked passes, **crowded receivers**, offside | Tackles, interceptions, contested lofted passes, blocks, saves |
-| Formations | Any mix of roles plus a keeper, custom editor, halftime changes | 5 presets only |
-
-The prototype itself also differs from the creator's written rules in 11 places (Open Decisions tab). Those decisions come first.
-
-Already aligned in v0.1: role names (Box Keeper, Central Pillar, Defensive Flanker, Anchor, Connector, Sparker, Flanker, Frontliner), CPU level names, and match rewards (40 Tactic Tokens for finishing, +80 for a win or +30 for a draw, one Gold Boot per goal).
+**Resolved:** this repository now implements David André's official rules (extraction draft, 3 Nov 2026). See [OFFICIAL_RULES_IMPLEMENTATION.md](OFFICIAL_RULES_IMPLEMENTATION.md) for the rule-by-rule mapping, the 11 interpretations awaiting confirmation, and the balance findings. Role names, CPU levels and match rewards match the Development Brief.
 
 ## 4. Prices: what's actually configured vs. the memo
 
@@ -84,8 +70,8 @@ The LongPack quote request is already sent; send this as an addendum. The Panda 
 | Phase | Work | Notes |
 |---|---|---|
 | 0. Audit | Run the prototype's 22 test suites; settle the 11 open rule decisions; turn the CPU's late-game logic back on | Needs the Replit export |
-| Rules | Laws Mode stage 1 (offside, ball out of play, throw-ins, goal kicks, corners, keeper handling) is built and tested here; stages 2–3 in [LAWS_MODE.md](LAWS_MODE.md) | David to approve each stage |
-| 1. Foundation | Move Tactic Tokens, Gold Boots and Mission Medals to a server ledger (they're editable on the device today); season config and Season 2 setup; move hosting off Replit; grant rewards for online matches after server validation | v0.1's `/api/verify` replay approach is a working example |
+| Rules | Official rules implemented and tested here; 11 interpretations to confirm ([notes](OFFICIAL_RULES_IMPLEMENTATION.md)); optional Laws variant in [LAWS_MODE.md](LAWS_MODE.md) | David to confirm |
+| 1. Foundation | Move Tactic Tokens, Gold Boots and Mission Medals to a server ledger (they're editable on the device today); season config and Season 2 setup; move hosting off Replit; grant rewards for online matches after server validation | This repo's `/api/verify` replay (clock included) is a working example |
 | 2. Mobile apps | Capacitor iOS and Android builds, push notifications, haptics, deep links | |
 | 3. Store billing | In-app purchases with receipt validation; fix the 150 vs 135 token gap first | |
 | 4. Online play | Rewards for online matches; optional matchmaking queue using the existing hidden rating | |
