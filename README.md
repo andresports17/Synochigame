@@ -53,3 +53,7 @@ The engine is deterministic and treats state as immutable. The same setup and ac
 ## Rule changes
 
 Every rule lives in one clearly named function in `src/engine/rules.ts`, with movement ranges in `roles.ts` and zones in `board.ts`. To change a rule, edit it there and update the matching block in `tests/official.test.ts`. Points still awaiting David's confirmation are listed in the implementation notes.
+
+## Licence
+
+Copyright © 2026 David Andre LLC. All rights reserved. Proprietary and confidential; see [LICENSE](LICENSE).

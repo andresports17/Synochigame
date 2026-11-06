@@ -3,6 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "description": "SYNOCHÍ by David André — The World's Game On Board",
+  "license": "UNLICENSED",
+  "author": "David Andre LLC",
   "type": "module",
   "scripts": {
     "dev": "vite",
