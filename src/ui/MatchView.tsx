@@ -11,7 +11,9 @@ import {
   cellName,
   clockText,
   getPiece,
+  mustPlayBall,
   offsideLine,
+  oneTwoRuns,
   passOutcome,
   pieceAt,
   planTurn,
@@ -145,9 +147,10 @@ interface ViewProps {
   clockMode?: ClockMode;
 }
 
-export function MatchView({ state, onAction, humanSides, busy, theme, kits, banner, statusNote, controls, clockMode = 'realtime' }: ViewProps) {
+export function MatchView({ state, onAction, humanSides, busy, theme, kits, banner, statusNote, controls }: ViewProps) {
   const [sel, setSel] = useState<string | null>(null);
   const [oneTwoMode, setOneTwoMode] = useState(false);
+  const [via, setVia] = useState<string | null>(null);
   const [pending, setPending] = useState<Action | null>(null);
   const [hover, setHover] = useState<Cell | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -158,6 +161,7 @@ export function MatchView({ state, onAction, humanSides, busy, theme, kits, bann
   useEffect(() => {
     setPending(null);
     setOneTwoMode(false);
+    setVia(null);
     if (!myTurn) setSel(null);
     else if (forced) setSel(forced);
     else setSel((cur) => (cur && getPiece(state, cur)?.side === state.turn ? cur : null));
@@ -172,7 +176,12 @@ export function MatchView({ state, onAction, humanSides, busy, theme, kits, bann
     if (!opts || !selPiece) return [];
     const out: Overlay[] = [];
     if (oneTwoMode) {
-      for (const q of opts.oneTwos) out.push({ cell: q.pos, kind: 'oneTwo' });
+      // Q6a: pick the partner, then where to run (any square in line with the partner).
+      const partner = via ? getPiece(state, via) : undefined;
+      if (partner) {
+        out.push({ cell: partner.pos, kind: 'oneTwo' });
+        for (const c of oneTwoRuns(state, selPiece, partner)) out.push({ cell: c, kind: 'run' });
+      } else for (const q of opts.oneTwos) out.push({ cell: q.pos, kind: 'oneTwo' });
       return out;
     }
     for (const to of opts.moves) {
@@ -186,16 +195,17 @@ export function MatchView({ state, onAction, humanSides, busy, theme, kits, bann
       out.push({ cell: q.pos, kind: r === 'complete' ? 'pass' : r === 'offside' ? 'passOffside' : 'passLost' });
     }
     return out;
-  }, [opts, selPiece, oneTwoMode, state]);
+  }, [opts, selPiece, oneTwoMode, via, state]);
 
-  const pendingCell = pending && (pending.type === 'move' || pending.type === 'pass') ? pending.to : pending?.type === 'oneTwo' ? getPiece(state, pending.viaId)?.pos : null;
+  const pendingCell = pending && (pending.type === 'move' || pending.type === 'pass' || pending.type === 'oneTwo') ? pending.to : null;
   const allOverlays = pendingCell ? [...overlays, { cell: pendingCell, kind: 'pending' as const }] : overlays;
 
   const buildAction = (cell: Cell): Action | null => {
     if (!selPiece || !opts) return null;
     if (oneTwoMode) {
-      const q = opts.oneTwos.find((x) => sameCell(x.pos, cell));
-      return q ? { type: 'oneTwo', pieceId: selPiece.id, viaId: q.id } : null;
+      const partner = via ? getPiece(state, via) : undefined;
+      if (!partner) return null;
+      return oneTwoRuns(state, selPiece, partner).some((c) => sameCell(c, cell)) ? { type: 'oneTwo', pieceId: selPiece.id, viaId: partner.id, to: cell } : null;
     }
     if (opts.moves.some((c) => sameCell(c, cell))) return { type: 'move', pieceId: selPiece.id, to: cell };
     if (opts.passes.some((q) => sameCell(q.pos, cell))) return { type: 'pass', pieceId: selPiece.id, to: cell };
@@ -211,6 +221,7 @@ export function MatchView({ state, onAction, humanSides, busy, theme, kits, bann
     }
     setPending(null);
     setOneTwoMode(false);
+    setVia(null);
   };
 
   const onCell = (cell: Cell) => {
@@ -219,6 +230,14 @@ export function MatchView({ state, onAction, humanSides, busy, theme, kits, bann
     if (pending && pendingCell && sameCell(pendingCell, cell)) return commit(pending);
     const a = buildAction(cell);
     if (a) return setPending(a);
+    if (oneTwoMode && opts) {
+      const q = opts.oneTwos.find((x) => sameCell(x.pos, cell));
+      if (q) {
+        setVia(q.id);
+        setPending(null);
+        return;
+      }
+    }
     const p = pieceAt(state, cell);
     if (p && p.side === state.turn && !forced) {
       setSel(p.id === sel ? null : p.id);
@@ -300,7 +319,7 @@ export function MatchView({ state, onAction, humanSides, busy, theme, kits, bann
                 <span>
                   {TEAM_NAMES[state.turn]} to play{!humanSides.includes(state.turn) && busy ? ' · thinking…' : ''}
                 </span>
-                {state.timed && clockMode === 'realtime' && !state.kickoffPending && (
+                {state.timed && state.turnTimer && !state.kickoffPending && (
                   <span className={`turn-timer ${warn ? 'warn' : ''}`} aria-label={`${Math.ceil(state.clock.turnMs / 1000)} seconds left this turn`}>
                     <i style={{ width: `${turnFrac * 100}%` }} />
                     <b className="mono">{Math.ceil(state.clock.turnMs / 1000)}s</b>
@@ -314,6 +333,9 @@ export function MatchView({ state, onAction, humanSides, busy, theme, kits, bann
 
           {myTurn && !selPiece && <p className="hint">Select one of your pieces. A turn is one piece: move it, then pass or shoot with it if the rules allow.</p>}
           {myTurn && state.kickoffPending && <p className="hint">Kickoff: your Frontliner must pass first. Tap a teammate in a straight or diagonal line.</p>}
+          {myTurn && mustPlayBall(state) && (
+            <p className="error">Possession limit: the ball has stayed still for {state.stallLimit} turns. Move it this turn (dribble, pass or shoot), or it goes to the opponent.</p>
+          )}
           {myTurn && state.followUp && (
             <p className="hint">
               Follow-up: this piece may {state.followUp.canPass ? 'pass' : ''}
@@ -336,10 +358,11 @@ export function MatchView({ state, onAction, humanSides, busy, theme, kits, bann
                 <button type="button" disabled={!opts.shoot} onClick={() => { setOneTwoMode(false); setPending({ type: 'shoot', pieceId: selPiece.id }); }}>
                   Shoot
                 </button>
-                <button type="button" className={oneTwoMode ? 'active' : ''} disabled={opts.oneTwos.length === 0} onClick={() => { setOneTwoMode(true); setPending(null); }}>
+                <button type="button" className={oneTwoMode ? 'active' : ''} disabled={opts.oneTwos.length === 0} onClick={() => { setOneTwoMode(true); setVia(null); setPending(null); }}>
                   One-two
                 </button>
               </div>
+              {oneTwoMode && <p className="hint">{via ? 'Now tap a gold diamond: where the passer runs to get the ball back.' : 'Tap the partner (dashed ring) to play the one-two with.'}</p>}
               <ul className="legend">
                 <li><i className="lg-move" /> move</li>
                 <li><i className="lg-danger" /> lose the ball</li>
@@ -380,7 +403,7 @@ export function MatchView({ state, onAction, humanSides, busy, theme, kits, bann
 
           {myTurn && !state.kickoffPending && (
             <button type="button" className="btn end" onClick={() => commit({ type: 'endTurn' })}>
-              {state.followUp ? 'End turn' : 'Pass the turn'}
+              End turn
             </button>
           )}
 

@@ -49,10 +49,10 @@ describe('match server', () => {
   it('verifies a match log by replay', async () => {
     const actions = [
       { type: 'pass', pieceId: 'H9', to: { c: 7, r: 17 } },
-      { type: 'tick', ms: 300000 },
+      { type: 'tick', ms: 600000 },
       { type: 'resume' },
       { type: 'pass', pieceId: 'A9', to: { c: 8, r: 6 } },
-      { type: 'tick', ms: 300000 },
+      { type: 'tick', ms: 600000 },
     ];
     const r = await post('/api/verify', { setup: { homeFormation: '4-3-3', awayFormation: '4-3-3' }, actions });
     expect(r.json).toMatchObject({ valid: true, finished: true, score: { home: 0, away: 0 } });

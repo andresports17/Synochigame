@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   DIFFICULTIES,
+  DEFAULT_FORMATION,
   FORMATIONS,
   FORMATION_NAMES,
+  HALF_MINUTE_OPTIONS,
   KICKOFF_SPOT,
   QUIZ,
   QUIZ_OPTIONS,
@@ -13,6 +15,11 @@ import {
   clockText,
   createMatch,
   formationPieces,
+  layoutPieces,
+  legalFormationSquare,
+  mirrorLayout,
+  presetLayout,
+  validateFormation,
   getPiece,
   isOffside,
   judge,
@@ -22,12 +29,13 @@ import {
   type Action,
   type Difficulty,
   type GameState,
+  type Layout,
   type Role,
   type Scenario,
   type Side,
 } from '../engine';
 import { Board } from './Board';
-import { MatchView, StatsTable, useLocalMatch, type ClockMode, type Controller } from './MatchView';
+import { MatchView, StatsTable, useLocalMatch, type Controller } from './MatchView';
 import { MATCH_REWARDS, MEDALS_PER_SCENARIO, TOKENS_PER_SCENARIO, useProfile, type Profile } from './profile';
 import { AWAY_KITS, BOARD_THEMES, HOME_KITS, type BoardTheme, type Kit } from './themes';
 
@@ -36,7 +44,7 @@ type Kits = { home: Kit; away: Kit };
 type Screen =
   | { id: 'home' }
   | { id: 'setup'; local: boolean }
-  | { id: 'match'; key: number; local: boolean; difficulty: Difficulty; home: string; away: string; clock: ClockMode }
+  | { id: 'match'; key: number; local: boolean; difficulty: Difficulty; home: string; away: string; halfMinutes: number }
   | { id: 'learn' }
   | { id: 'lesson'; scenarioId: string; key: number }
   | { id: 'quiz'; key: number }
@@ -78,7 +86,7 @@ export function App() {
           local={screen.local}
           profile={profile}
           onBack={home}
-          onStart={(difficulty, h, a, clock) => go({ id: 'match', key: Date.now(), local: screen.local, difficulty, home: h, away: a, clock })}
+          onStart={(difficulty, h, a, halfMinutes) => go({ id: 'match', key: Date.now(), local: screen.local, difficulty, home: h, away: a, halfMinutes })}
         />
       )}
       {screen.id === 'match' && (
@@ -88,7 +96,8 @@ export function App() {
           difficulty={screen.difficulty}
           home={screen.home}
           away={screen.away}
-          clock={screen.clock}
+          halfMinutes={screen.halfMinutes}
+          customLayout={profile.customLayout ?? null}
           theme={theme}
           kits={kits}
           onExit={home}
@@ -156,7 +165,16 @@ export function App() {
 function Home({ profile, go }: { profile: Profile; go: (s: Screen) => void }) {
   const done = SCENARIOS.filter((l) => profile.completed.includes(l.id)).length;
   const r = profile.record;
-  const preview = useMemo(() => createMatch({ homeFormation: profile.formation, awayFormation: '4-4-2', timed: false }), [profile.formation]);
+  const preview = useMemo(
+    () =>
+      createMatch({
+        homeFormation: profile.formation === CUSTOM ? DEFAULT_FORMATION : profile.formation,
+        homeLayout: profile.formation === CUSTOM && profile.customLayout ? profile.customLayout : undefined,
+        awayFormation: '4-4-2',
+        timed: false,
+      }),
+    [profile.formation, profile.customLayout],
+  );
   return (
     <main className="home-page">
       <section className="hero">
@@ -219,11 +237,14 @@ function BackBar({ title, onBack }: { title: string; onBack: () => void }) {
 
 // ------------------------------------------------------------------ setup
 
-function Setup({ local, profile, onBack, onStart }: { local: boolean; profile: Profile; onBack: () => void; onStart: (d: Difficulty, h: string, a: string, clock: ClockMode) => void }) {
+const CUSTOM = 'custom';
+
+function Setup({ local, profile, onBack, onStart }: { local: boolean; profile: Profile; onBack: () => void; onStart: (d: Difficulty, h: string, a: string, halfMinutes: number) => void }) {
   const [difficulty, setDifficulty] = useState<Difficulty>('baller');
-  const [clock, setClock] = useState<ClockMode>('realtime');
+  const [halfMinutes, setHalfMinutes] = useState(10);
   const [h, setH] = useState(profile.formation);
   const [a, setA] = useState('4-4-2');
+  const hasCustom = !!profile.customLayout;
   return (
     <main className="page">
       <BackBar title={local ? 'Local match' : 'Play vs CPU'} onBack={onBack} />
@@ -234,37 +255,39 @@ function Setup({ local, profile, onBack, onStart }: { local: boolean; profile: P
             <label key={d} className={`choice ${d === difficulty ? 'on' : ''}`}>
               <input type="radio" name="difficulty" id={`diff-${d}`} checked={d === difficulty} onChange={() => setDifficulty(d)} />
               <strong>{DIFFICULTIES[d].label}</strong>
-              <span>{DIFFICULTIES[d].blurb}</span>
+              <span>{DIFFICULTIES[d].blurb} Possession limit: {stallLimitFor(local, d)} turns.</span>
             </label>
           ))}
         </fieldset>
       )}
       <fieldset className="choices">
-        <legend>Clock</legend>
-        {(
-          [
-            ['realtime', 'Official clock', 'Two 5-minute halves in real time, 25 seconds per turn. Run out and you forfeit the turn.'],
-            ['relaxed', 'Relaxed', 'No turn timer. Each turn uses 6 seconds of the match clock, so you can think.'],
-          ] as [ClockMode, string, string][]
-        ).map(([m, label, blurb]) => (
-          <label key={m} className={`choice ${m === clock ? 'on' : ''}`}>
-            <input type="radio" name="clock" id={`clock-${m}`} checked={m === clock} onChange={() => setClock(m)} />
-            <strong>{label}</strong>
-            <span>{blurb}</span>
+        <legend>Half length</legend>
+        {HALF_MINUTE_OPTIONS.map((m) => (
+          <label key={m} className={`choice ${m === halfMinutes ? 'on' : ''}`}>
+            <input type="radio" name="half" id={`half-${m}`} checked={m === halfMinutes} onChange={() => setHalfMinutes(m)} />
+            <strong>2 × {m} min</strong>
+            <span>{m === 10 ? 'Standard.' : m === 5 ? 'Quick game.' : 'Long game.'} Real-time clock, no turn timer.</span>
           </label>
         ))}
       </fieldset>
       <div className="two-col">
-        <FormationPicker label={`${TEAM_NAMES.home} formation${local ? '' : ' (you)'}`} value={h} onChange={setH} id="fh" />
-        <FormationPicker label={`${TEAM_NAMES.away} formation${local ? '' : ' (CPU)'}`} value={a} onChange={setA} id="fa" />
+        <FormationPicker label={`${TEAM_NAMES.home} formation${local ? '' : ' (you)'}`} value={h} onChange={setH} id="fh" custom={hasCustom} />
+        <FormationPicker label={`${TEAM_NAMES.away} formation${local ? '' : ' (CPU)'}`} value={a} onChange={setA} id="fa" custom={hasCustom && local} />
       </div>
-      <p className="note">{TEAM_NAMES.home} kick off and attack up the board. Formations can be changed at half-time.</p>
-      <button type="button" className="btn primary big" onClick={() => onStart(difficulty, h, a, clock)}>Kick off</button>
+      <p className="note">
+        {TEAM_NAMES.home} kick off and attack up the board. Formations can be changed at half-time. The 25-second turn timer applies to online play.
+      </p>
+      <button type="button" className="btn primary big" onClick={() => onStart(difficulty, h, a, halfMinutes)}>Kick off</button>
     </main>
   );
 }
 
-function FormationPicker({ label, value, onChange, id }: { label: string; value: string; onChange: (v: string) => void; id: string }) {
+/** Q20: 2 turns for ranked play and the hardest CPU; 3 for regular online, local and easier CPU. */
+function stallLimitFor(local: boolean, d: Difficulty) {
+  return !local && d === 'master' ? 2 : 3;
+}
+
+function FormationPicker({ label, value, onChange, id, custom }: { label: string; value: string; onChange: (v: string) => void; id: string; custom?: boolean }) {
   return (
     <label className="field" htmlFor={id}>
       <span>{label}</span>
@@ -272,6 +295,7 @@ function FormationPicker({ label, value, onChange, id }: { label: string; value:
         {FORMATION_NAMES.map((f) => (
           <option key={f} value={f}>{f} · {FORMATIONS[f].blurb}</option>
         ))}
+        {custom && <option value={CUSTOM}>My set-up · your own placement</option>}
       </select>
     </label>
   );
@@ -280,14 +304,25 @@ function FormationPicker({ label, value, onChange, id }: { label: string; value:
 // ------------------------------------------------------------------ match
 
 function LocalMatch({
-  local, difficulty, home, away, clock, theme, kits, onExit, onRematch, onFinish,
+  local, difficulty, home, away, halfMinutes, customLayout, theme, kits, onExit, onRematch, onFinish,
 }: {
-  local: boolean; difficulty: Difficulty; home: string; away: string; clock: ClockMode; theme: BoardTheme; kits: Kits;
+  local: boolean; difficulty: Difficulty; home: string; away: string; halfMinutes: number; customLayout: Layout | null; theme: BoardTheme; kits: Kits;
   onExit: () => void; onRematch: () => void; onFinish: (s: GameState) => number | void;
 }) {
-  const initial = useMemo(() => createMatch({ homeFormation: home, awayFormation: away }), [home, away]);
+  const initial = useMemo(
+    () =>
+      createMatch({
+        homeFormation: home === CUSTOM ? DEFAULT_FORMATION : home,
+        awayFormation: away === CUSTOM ? DEFAULT_FORMATION : away,
+        homeLayout: home === CUSTOM && customLayout ? customLayout : undefined,
+        awayLayout: away === CUSTOM && customLayout ? mirrorLayout(customLayout) : undefined,
+        halfMinutes,
+        stallLimit: stallLimitFor(local, difficulty),
+      }),
+    [home, away, halfMinutes, customLayout, local, difficulty],
+  );
   const controllers: Record<Side, Controller> = { home: 'human', away: local ? 'human' : difficulty };
-  const { state, dispatch, cpuThinking, paused, setPaused } = useLocalMatch(initial, controllers, clock);
+  const { state, dispatch, cpuThinking, paused, setPaused } = useLocalMatch(initial, controllers);
   const [earned, setEarned] = useState<number | null>(null);
   const [htHome, setHtHome] = useState(home);
   const [htAway, setHtAway] = useState(away);
@@ -331,7 +366,7 @@ function LocalMatch({
       <div className="backbar">
         <button type="button" className="btn ghost small" onClick={onExit}>← Leave match</button>
         <span className="muted">
-          {local ? 'Local match' : `vs CPU · ${DIFFICULTIES[difficulty].label}`} · {clock === 'realtime' ? 'Official clock' : 'Relaxed'} · {state.formations.home} v {state.formations.away}
+          {local ? 'Local match' : `vs CPU · ${DIFFICULTIES[difficulty].label}`} · 2 × {halfMinutes} min · {state.layouts.home ? 'My set-up' : state.formations.home} v {state.layouts.away ? 'My set-up' : state.formations.away}
         </span>
       </div>
       <MatchView
@@ -342,9 +377,8 @@ function LocalMatch({
         theme={theme}
         kits={kits}
         banner={banner}
-        clockMode={clock}
         controls={
-          state.phase === 'playing' && clock === 'realtime' ? (
+          state.phase === 'playing' ? (
             <button type="button" className="btn ghost small" onClick={() => setPaused(!paused)}>{paused ? 'Resume clock' : 'Pause'}</button>
           ) : null
         }
@@ -450,7 +484,6 @@ function LessonRun({
         theme={theme}
         kits={kits}
         banner={banner}
-        clockMode="relaxed"
       />
     </main>
   );
@@ -561,25 +594,79 @@ function RefsEye({ theme, kits, passed, onBack, onRetry, onPass }: { theme: Boar
 // ------------------------------------------------------------------ formations
 
 function Formations({ profile, update, onBack, theme, kits }: { profile: Profile; update: (fn: (p: Profile) => Profile) => void; onBack: () => void; theme: BoardTheme; kits: Kits }) {
-  const [f, setF] = useState(profile.formation);
-  const state = useMemo(() => ({ pieces: formationPieces('home', f), ball: { pos: KICKOFF_SPOT.home, carrier: null } }), [f]);
-  const counts = FORMATIONS[f].slots.reduce<Record<string, number>>((acc, [r]) => ({ ...acc, [r]: (acc[r] ?? 0) + 1 }), {});
+  const [f, setF] = useState(profile.formation === CUSTOM ? CUSTOM : profile.formation);
+  const [layout, setLayout] = useState<Layout>(() => profile.customLayout ?? presetLayout('home', DEFAULT_FORMATION));
+  const [sel, setSel] = useState<number | null>(null);
+  const [saved, setSaved] = useState(false);
+  const editing = f === CUSTOM;
+  const pieces = editing ? layoutPieces('home', layout) : formationPieces('home', f);
+  const state = { pieces, ball: { pos: KICKOFF_SPOT.home, carrier: null } };
+  const errors = editing ? validateFormation('home', pieces) : [];
+  const counts = pieces.reduce<Record<string, number>>((acc, p) => ({ ...acc, [p.role]: (acc[p.role] ?? 0) + 1 }), {});
+  const targets =
+    editing && sel !== null
+      ? Array.from({ length: 24 * 16 }, (_, i) => ({ c: i % 16, r: Math.floor(i / 16) })).filter(
+          (c) => legalFormationSquare('home', layout[sel].role, c) && !layout.some((l) => l.pos.c === c.c && l.pos.r === c.r),
+        )
+      : [];
+  const onCell = (c: { c: number; r: number }) => {
+    if (!editing) return;
+    const at = layout.findIndex((l) => l.pos.c === c.c && l.pos.r === c.r);
+    if (at >= 0) return setSel(at === sel ? null : at);
+    if (sel !== null && targets.some((t) => t.c === c.c && t.r === c.r)) {
+      setLayout(layout.map((l, i) => (i === sel ? { ...l, pos: c } : l)));
+      setSel(null);
+      setSaved(false);
+    }
+  };
   return (
     <main className="page">
       <BackBar title="Formations" onBack={onBack} />
       <div className="seg" role="tablist" aria-label="Formation">
         {FORMATION_NAMES.map((n) => (
-          <button key={n} type="button" role="tab" aria-selected={n === f} className={n === f ? 'active' : ''} onClick={() => setF(n)}>{n}</button>
+          <button key={n} type="button" role="tab" aria-selected={n === f} className={n === f ? 'active' : ''} onClick={() => { setF(n); setSel(null); }}>{n}</button>
         ))}
+        <button type="button" role="tab" aria-selected={editing} className={editing ? 'active' : ''} onClick={() => setF(CUSTOM)}>My set-up</button>
       </div>
       <div className="formation-view">
-        <div className="mini-board"><Board state={state} theme={theme} kits={kits} /></div>
+        <div className="mini-board">
+          <Board state={state} theme={theme} kits={kits} selected={editing && sel !== null ? pieces[sel].id : null} overlays={targets.map((cell) => ({ cell, kind: 'move' as const }))} onCell={editing ? onCell : undefined} />
+        </div>
         <div className="stack">
-          <p>{FORMATIONS[f].blurb}</p>
+          {editing ? (
+            <>
+              <p>Place your own pieces anywhere legal in your half: tap a piece, then a white dot. The keeper stays in its six-yard box, nobody else may stand in either six-yard box, and the centre circle stays clear.</p>
+              <label className="field" htmlFor="base">
+                <span>Start from a preset</span>
+                <select id="base" value="" onChange={(e) => { if (e.target.value) { setLayout(presetLayout('home', e.target.value)); setSel(null); setSaved(false); } }}>
+                  <option value="">Choose…</option>
+                  {FORMATION_NAMES.map((n) => <option key={n} value={n}>{n}</option>)}
+                </select>
+              </label>
+              {errors.length > 0 && <p className="error">{errors[0]}</p>}
+              <div className="row">
+                <button type="button" className="btn primary" disabled={errors.length > 0} onClick={() => { update((p) => ({ ...p, customLayout: layout })); setSaved(true); }}>
+                  {saved ? 'Saved' : 'Save my set-up'}
+                </button>
+                <button
+                  type="button"
+                  className="btn ghost"
+                  disabled={!profile.customLayout || profile.formation === CUSTOM}
+                  onClick={() => update((p) => ({ ...p, formation: CUSTOM }))}
+                >
+                  {profile.formation === CUSTOM ? 'Your default' : 'Use as my default'}
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p>{FORMATIONS[f].blurb}</p>
+              <button type="button" className="btn primary" disabled={profile.formation === f} onClick={() => update((p) => ({ ...p, formation: f }))}>
+                {profile.formation === f ? 'Your default formation' : `Set ${f} as default`}
+              </button>
+            </>
+          )}
           <p className="mono">{Object.entries(counts).map(([r, n]) => `${n}× ${ROLE_NAMES[r as Role]}`).join(' · ')}</p>
-          <button type="button" className="btn primary" disabled={profile.formation === f} onClick={() => update((p) => ({ ...p, formation: f }))}>
-            {profile.formation === f ? 'Your default formation' : `Set ${f} as default`}
-          </button>
           <RoleList />
         </div>
       </div>
@@ -653,52 +740,57 @@ function RulesPage({ onBack }: { onBack: () => void }) {
   return (
     <main className="page prose">
       <BackBar title="Official rules" onBack={onBack} />
-      <p className="note">From David André's rules (extraction draft, 3 November 2026). Section numbers match that document.</p>
+      <p className="note">David André's rules (extraction draft, 3 November 2026), with his decisions of 6 November 2026. Section numbers match the rules document.</p>
       <h3>1 · Board</h3>
-      <p>24 rows × 16 columns (A–P). Blue attacks up toward row 1; Red attacks down toward row 24. The goal mouth spans F–K, and only shots that reach the goal line in G–J are on target. Each end has a six-yard box (columns F–K, three rows deep) that only the Box Keeper may enter.</p>
+      <p>
+        24 rows × 16 columns (A–P), row 1 at the top. Blue attacks up toward row 1; Red attacks down toward row 24. The goal mouth spans F–K, and only shots that
+        reach the goal line in G–J are on target. Each end has an 18-yard box (columns D–M, four rows deep) and, inside it, a six-yard box (columns F–K, three rows
+        deep) that only the Box Keeper may enter.
+      </p>
       <h3>2 · Teams and formations</h3>
-      <p>Eleven pieces: exactly one Box Keeper and at least one Frontliner. Everyone starts in their own half; the keeper inside its six-yard box; nobody else in either six-yard box, and the defending side out of the centre circle.</p>
+      <p>
+        Eleven pieces: exactly one Box Keeper and at least one Frontliner. Pick a preset or place your own pieces anywhere legal: your own half, the keeper in its
+        six-yard box, nobody else in either six-yard box, and nobody from the defending side in the centre circle. The kickoff starts at the centre, on the halfway line.
+      </p>
       <h3>3 · Movement</h3>
-      <p>Pieces move in straight lines, orthogonal or diagonal, up to a limit set by role and direction. They cannot jump over or land on another piece, and nobody is ever removed from the board.</p>
+      <p>Pieces move in straight lines, orthogonal or diagonal, up to a limit set by role and direction. They cannot jump over or land on another piece, and nobody is ever removed from the board. The Box Keeper moves up to 2 squares anywhere inside its own 18-yard box.</p>
       <RoleList />
       <h3>4 · Turns</h3>
       <ul>
         <li>A turn is one piece: usually a move, then a pass or shot by the same piece if allowed.</li>
-        <li>After moving, a ball carrier may pass if it ends in its own half or the shooting zone, and shoot if it ends in the shooting zone. A Connector may pass after moving from anywhere. A Sparker may not move and then shoot.</li>
+        <li>After moving, any piece may pass in its own half. Only a Connector may move and then pass anywhere. Only attacking pieces (Frontliner, Flanker, Sparker) may move and then shoot, inside the shooting zone.</li>
         <li>A carrier may also pass or shoot without moving. Moving onto a loose ball collects it.</li>
-        <li>A pass or shot ends the turn. A tackle gives the winning team a fresh turn.</li>
+        <li>A pass or shot ends the turn. A tackle gives the winning team a fresh turn. You can end your turn at any time.</li>
+        <li>Possession limit: if your team keeps the ball on the same square for 3 turns in a row (2 in ranked play and against the Master CPU), the ball must move next turn, by a dribble, pass or shot. If it does not, it goes to the nearest opponent.</li>
       </ul>
       <h3>5 · Passing</h3>
       <ul>
         <li>Straight or diagonal to a teammate, any distance.</li>
         <li>An opponent on the first square of the pass takes it. An opponent two squares away on the line intercepts it unless a teammate further down the line shields it. Opponents three or more away are ignored.</li>
         <li>Contested reception: a defender right behind the receiver, in line with the pass, wins it; so does a double-team that leaves the receiver no free, unpressured square.</li>
-        <li>One-two: with a compatible partner, the passer runs automatically onto the receiver's row and gets the ball back.</li>
+        <li>One-two: pass to a compatible partner, who stays put; then run (forward, backward or sideways, within normal movement) to any square in line with the partner and get the ball back. A defender on the return line intercepts it; one next to the run square can still tackle.</li>
       </ul>
       <h3>6 · Offside</h3>
-      <p>When the pass is played, a receiver is offside if it is in the opponent's half, ahead of the ball, and beyond the last outfield defender. Level is onside. The Box Keeper does not count. The ball goes to the defender nearest the offender.</p>
+      <p>As in real football: when the pass is played, a receiver is offside if it is in the opponent's half, ahead of the ball, and beyond the second-last defender (the keeper counts as one of the last two). Level is onside, and a pass from a teammate further forward is never offside. Offside is checked before anything else, and the ball goes to the defender nearest the offender.</p>
       <h3>7 · Tackling</h3>
       <ul>
         <li>Reactive: a carrier that moves next to an Anchor, Central Pillar or Defensive Flanker loses the ball.</li>
-        <li>Active: a defender that moves next to the carrier wins it if its role allows: Central Pillar diagonally, or in its own half when the carrier has no clear pass; Defensive Flanker from the flank columns; Anchor in its own half or in a double-team; Connector directly in front in its own half, or in a double-team; Frontliner, Flanker and Sparker only in a double-team. Any two pieces trap a carrier with no safe pass and no escape.</li>
+        <li>Active: a defender that moves next to the carrier wins it if its role allows: Central Pillar diagonally, or in its own half when the carrier has no clear pass; Defensive Flanker from the flank columns; Anchor in its own half or in a double-team; Connector directly in front of the carrier (in the carrier's direction of attack) in its own half, or in a double-team; Frontliner, Flanker and Sparker only in a double-team. Any two pieces trap a carrier with no safe pass and no escape.</li>
       </ul>
       <h3>8 · Shooting</h3>
       <ul>
         <li>Only from the shooting zone (shaded when you select your ball carrier).</li>
         <li>From columns G–J the shot goes straight; from outside, diagonally toward goal.</li>
-        <li>The first piece on the path stops it: the keeper saves, anyone else blocks. A keeper within one square of the path also saves. A clear path ending in G–J is a goal; otherwise it is wide and the keeper restarts.</li>
-        <li>Blocked shots rebound one square back (straight shots) or two squares diagonally back (diagonal shots).</li>
+        <li>The first piece on the path stops it: the keeper saves, anyone else blocks. The keeper also saves a shot passing within one square of it; anything further away goes past. A clear path ending in G–J is a goal; otherwise it is wide and the keeper restarts.</li>
+        <li>Blocked shots rebound one square back (straight shots) or two squares diagonally back (diagonal shots). A loose rebound stays on its square until a piece moves onto it.</li>
       </ul>
       <h3>9 · Kickoff and clock</h3>
-      <p>The kickoff Frontliner must pass first. Two five-minute halves in real time, starting from the opening pass, and 25 seconds per turn. Run out of time and you forfeit the turn. Formations can change at half-time; the other team kicks off the second half.</p>
-      <h3>Awaiting David's confirmation</h3>
+      <p>The kickoff Frontliner must pass first, and the clock starts with that pass. Two 10-minute halves (5 or 15 against the CPU). Online, each turn has a 25-second timer: run out and you forfeit the turn. Formations can change at half-time; the other team kicks off the second half.</p>
+      <h3>Still to confirm</h3>
       <ul>
-        <li>Row numbering: here row 1 is the top of the board (Red's goal line).</li>
-        <li>Kickoff squares: H13 for Blue and I12 for Red.</li>
-        <li>Pass shielding: the receiver itself does not count as the shielding teammate.</li>
-        <li>One-two run square: the legal square on the receiver's row nearest the passer's column; the return pass is cut out by a defender on the lane or next to the run square.</li>
-        <li>Connector front tackle: the square directly ahead of the carrier, for both teams.</li>
-        <li>Loose rebounds go to the nearest piece, defenders first on a tie. The turn timer does not run during a kickoff.</li>
+        <li>Pass shielding: the receiver itself does not count as the shielding teammate (question 3 was not answered).</li>
+        <li>18-yard box size: columns D–M, four rows deep (scaled from a real pitch).</li>
+        <li>Possession limit: what counts as "the ball moved", and the penalty for not moving it.</li>
       </ul>
     </main>
   );

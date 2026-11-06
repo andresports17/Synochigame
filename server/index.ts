@@ -40,6 +40,8 @@ interface OnlineMatch {
   updatedAt: number;
 }
 
+const ONLINE_RULES = { halfMinutes: 10, turnTimer: true, stallLimit: 3 } as const;
+
 const matches = new Map<string, OnlineMatch>();
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const MATCH_TTL_MS = 6 * 60 * 60 * 1000;
@@ -107,7 +109,8 @@ export function createApp() {
     const token = newToken();
     m.tokens.away = token;
     m.formations.away = validFormation(req.body?.formation);
-    m.setup = { homeFormation: m.formations.home!, awayFormation: m.formations.away };
+    // Online play: two 10-minute halves, the 25-second turn timer (Q17) and the regular 3-turn possession limit (Q20).
+    m.setup = { homeFormation: m.formations.home!, awayFormation: m.formations.away, ...ONLINE_RULES };
     m.state = createMatch(m.setup);
     m.lastTick = Date.now();
     m.updatedAt = Date.now();
@@ -148,7 +151,14 @@ export function createApp() {
       return res.status(400).json({ valid: false, error: 'Provide setup and an actions array' });
     try {
       const s = replay(
-        { homeFormation: validFormation(setup.homeFormation), awayFormation: validFormation(setup.awayFormation), firstKickoff: setup.firstKickoff === 'away' ? 'away' : 'home' },
+        {
+          homeFormation: validFormation(setup.homeFormation),
+          awayFormation: validFormation(setup.awayFormation),
+          firstKickoff: setup.firstKickoff === 'away' ? 'away' : 'home',
+          halfMinutes: [5, 10, 15].includes(setup.halfMinutes) ? setup.halfMinutes : ONLINE_RULES.halfMinutes,
+          turnTimer: typeof setup.turnTimer === 'boolean' ? setup.turnTimer : ONLINE_RULES.turnTimer,
+          stallLimit: setup.stallLimit === 2 || setup.stallLimit === 3 || setup.stallLimit === null ? setup.stallLimit : ONLINE_RULES.stallLimit,
+        },
         actions,
       );
       res.json({ valid: true, finished: s.phase === 'finished', score: s.score });

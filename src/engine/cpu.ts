@@ -1,5 +1,5 @@
 import { adjacent, canShootFrom, dist, inOwnHalf, opponent, progress } from './board';
-import { actionsFor, carrierOf, hasSafePass, passOutcome, passTargets, resolveAction, shotOutcome } from './rules';
+import { actionsFor, carrierOf, hasSafePass, oneTwoRuns, passOutcome, passTargets, resolveAction, shotOutcome } from './rules';
 import type { Action, GameState, Side } from './types';
 
 /**
@@ -8,14 +8,15 @@ import type { Action, GameState, Side } from './types';
  *  - Beginner: no lookahead; picks among its best few plans with a little noise.
  *  - Baller:   one-ply lookahead: its plan, then the human's best reply.
  *  - Master:   two-ply: its plan, the reply, then its own best follow-up. Deterministic.
- * As in the original notes, the CPU does not play one-twos.
+ * One-twos (Q15): Master looks for them every turn and favours them, Baller considers
+ * them, Beginner only now and then.
  */
 export type Difficulty = 'beginner' | 'baller' | 'master';
 
 export const DIFFICULTIES: Record<Difficulty, { label: string; blurb: string }> = {
-  beginner: { label: 'Beginner', blurb: 'No lookahead and a little randomness. Forgiving.' },
+  beginner: { label: 'Beginner', blurb: 'No lookahead and a little randomness. Rarely plays one-twos.' },
   baller: { label: 'Baller', blurb: 'Looks one reply ahead.' },
-  master: { label: 'Master', blurb: 'Looks two moves ahead. No randomness.' },
+  master: { label: 'Master', blurb: 'Looks two moves ahead, loves a one-two. No randomness.' },
 };
 
 interface Plan {
@@ -23,8 +24,8 @@ interface Plan {
   state: GameState;
 }
 
-/** Every complete turn the side to play could take (without one-twos). */
-export function turnPlans(s: GameState): Plan[] {
+/** Every complete turn the side to play could take; one-twos only when asked for (they multiply the options). */
+export function turnPlans(s: GameState, withOneTwos = false): Plan[] {
   const plans: Plan[] = [];
   if (s.phase !== 'playing') return plans;
   const side = s.turn;
@@ -40,6 +41,12 @@ export function turnPlans(s: GameState): Plan[] {
       const a: Action = { type: 'shoot', pieceId: p.id };
       add([a], resolveAction(s, a));
     }
+    if (withOneTwos)
+      for (const q of o.oneTwos)
+        for (const to of oneTwoRuns(s, p, q)) {
+          const a: Action = { type: 'oneTwo', pieceId: p.id, viaId: q.id, to };
+          add([a], resolveAction(s, a));
+        }
     for (const to of o.moves) {
       const m: Action = { type: 'move', pieceId: p.id, to };
       const ns = resolveAction(s, m);
@@ -149,9 +156,13 @@ function bestPlanValue(s: GameState, side: Side): number {
 /** Choose the CPU's actions for this turn. */
 export function planTurn(s: GameState, difficulty: Difficulty = 'baller'): Action[] {
   const side = s.turn;
-  const plans = turnPlans(s);
+  // Q15: higher difficulties play one-twos more often; Beginner only on about one turn in five.
+  const withOneTwos = difficulty !== 'beginner' || noise(s, 55, 1) + 0.5 < 0.2;
+  const oneTwoBonus = difficulty === 'master' ? 40 : difficulty === 'baller' ? 15 : 0;
+  const plans = turnPlans(s, withOneTwos);
   if (!plans.length) return [{ type: 'endTurn' }];
-  const scored = plans.map((p, i) => ({ p, v: evaluate(p.state, side) + (difficulty === 'master' ? 0 : noise(s, i, difficulty === 'beginner' ? 160 : 30)) }));
+  const bonus = (p: Plan) => (p.actions[p.actions.length - 1]?.type === 'oneTwo' ? oneTwoBonus : 0);
+  const scored = plans.map((p, i) => ({ p, v: evaluate(p.state, side) + bonus(p) + (difficulty === 'master' ? 0 : noise(s, i, difficulty === 'beginner' ? 160 : 30)) }));
   scored.sort((a, b) => b.v - a.v);
   if (difficulty === 'beginner') {
     const top = scored.slice(0, 4);
@@ -161,7 +172,7 @@ export function planTurn(s: GameState, difficulty: Difficulty = 'baller'): Actio
   let best = scored[0];
   let bestV = -Infinity;
   for (const c of scored.slice(0, width)) {
-    const v = afterBestReply(c.p.state, side, difficulty === 'master') + (difficulty === 'baller' ? noise(c.p.state, 7, 30) : 0);
+    const v = afterBestReply(c.p.state, side, difficulty === 'master') + bonus(c.p) + (difficulty === 'baller' ? noise(c.p.state, 7, 30) : 0);
     if (v > bestV) {
       bestV = v;
       best = c;

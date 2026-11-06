@@ -2,11 +2,30 @@
 
 SYNOCHÍ is David André's project. Sources: the commercial launch memo; the Development Brief (11 Oct 2026, by King Dave), which documents the Replit prototype as of 23 June 2026; and this repository. No development partner is under contract.
 
+## Decisions made (David André, 6 November 2026)
+
+From the [Rules & Launch Questionnaire](https://claude.ai/artifact/JAcgHucbiMAVP42QiVFUoL), Part B. These override anything below that disagrees.
+
+| Q | Topic | Decision |
+|---|---|---|
+| 27 | Code base | **This repository (the new build)** goes to launch |
+| 28 | Pricing | The game is **free to download**; Founder's Edition **$4.99** |
+| 29 | Token packs | Add a **150-token pack at $9.99**; the 135-token pack becomes **$7.99** (it was $9.99). The premium season pass stays at 150 tokens |
+| 30 | Marketing claims | **Drop** "realistic 3D gameplay" and "blockchain collectibles" for now |
+| 31 | Physical figures | **Option C:** 11 identical figures per side with swappable role bases in the standard edition; role-specific figures in the collector's edition |
+| 32 | Physical turn timing | **Include a sand timer** in the box |
+| 33 | Platforms | **iOS and Android first**, web as well where possible |
+| 34 | Matchmaking | **Invite codes only** at launch |
+| 35 | Store accounts | Not set up yet; will be (owner to confirm, presumably David Andre LLC) |
+| 36 | Artwork | **Hire an illustrator** |
+| 37 | Legal | **Commission** a trademark search (SYNOCHÍ, Sinohi) and a lawyer's review of the licence, terms and privacy policy |
+| 38 | Dates | **Launch before 24 June 2027** (the Women's World Cup). Restart at Season 1 at launch if possible, otherwise Season 2 |
+
 ## 1. What the brief changes
 
 **The Replit prototype is the product.** According to the brief it already has the full rules, a three-level CPU, online play, a 24-lesson tutorial, 13 drills, a formation editor, ranked tiers, missions, a season pass, four currencies, Stripe token packs, clubs, leaderboards, accounts and accessibility options.
 
-This repository now implements the official rules from the Replit build (section 3) as a tested, deterministic engine with lessons, a rules quiz, CPU levels, online play with a server-side clock, and replay verification. The Replit prototype still has far more features (accounts, missions, season pass, shop, clubs, 24 lessons). **Recommendation:** use this engine's test suite to verify the prototype, rule by rule, and decide which code base goes to launch.
+This repository now implements the official rules from the Replit build (section 3) as a tested, deterministic engine with lessons, a rules quiz, CPU levels, online play with a server-side clock, and replay verification. The Replit prototype still has far more features (accounts, missions, season pass, shop, clubs, 24 lessons). **Decided (Q27):** this repository goes to launch; the prototype's features (accounts, missions, season pass, shop, clubs, more lessons) are to be rebuilt here.
 
 ## 2. Concept art vs. the prototype (corrected)
 
@@ -79,11 +98,10 @@ The LongPack quote request is already sent; send this as an addendum. The Panda 
 
 Outside the build: final piece art and store screenshots; Apple ($99 a year) and Google ($25 once) developer accounts; legal review of the privacy policy and terms, which exist; trademark clearance for SYNOCHÍ and Sinohi; and support processes.
 
-## 7. Decisions needed
+## 7. Still open
 
-1. Share the Replit export and the Rules, CPU and Open Decisions tabs, so Laws Mode can be checked against David's written rules.
-2. Settle the 11 open rule decisions.
-3. Season pass price: fix the 150-token vs. 135-token gap.
-4. Drop or keep the Founder's Edition (not in the build) and the blockchain and 3D claims.
-5. Physical figures: option A, B or C above.
-6. Launch on iOS, Android or both; is matchmaking needed at launch; target date.
+1. Who owns the App Store and Google Play developer accounts (Q35), and when they are opened.
+2. Final prices for the other token packs (Starter 50 / $4.99, Elite 360 / $19.99, Ultimate 1,050 / $49.99), now that the 135 and 150 packs change.
+3. David's approval of the restarts and fouls proposal (Q18, Q25, Q26).
+4. The few rule interpretations still open in [OFFICIAL_RULES_IMPLEMENTATION.md](OFFICIAL_RULES_IMPLEMENTATION.md).
+5. Which Replit features to rebuild first (accounts and the server currency ledger are the prerequisite for the shop and season pass).

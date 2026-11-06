@@ -26,35 +26,58 @@ Board labels in this document use columns A–P and rows 1–24 counted from the
 
 The clock is part of the deterministic log as `tick` actions, so the server can replay a match, clock included, to verify results. Online, the server applies real elapsed time, and players cannot send ticks.
 
-## Interpretations awaiting David's confirmation
+## David's decisions (questionnaire, 6 November 2026)
 
-The extract flags these points or leaves them open. Each choice is marked `INTERPRETATION` in the code where it applies:
+David answered the [Rules & Launch Questionnaire](https://claude.ai/artifact/JAcgHucbiMAVP42QiVFUoL) in comments. These rule answers are now built in:
 
-1. **Row numbering.** Row 1 is the top of the board (Red's goal line); Blue attacks up.
-2. **Kickoff squares.** Not given in the extract. The build uses H13 (Blue) and I12 (Red).
-3. **Pass shielding.** "A teammate farther down the ray" is taken to exclude the receiver. Otherwise every opponent 2 squares away would be shielded, and the 2-square interception rule would never apply.
-4. **Offside line.** "The most advanced non-keeper opponent" is read as the *deepest* outfield defender, the one nearest its own goal.
-5. **Order of pass checks.** Adjacent block, then lane interception, then offside, then contested reception.
-6. **One-two run square.** Of the legal squares on the receiver's row, the one nearest the passer's column. The return pass is cut out by a defender on the lane or adjacent to the run square. One-twos are allowed wherever a pass is allowed, including after a move.
-7. **Connector front tackle.** The square directly ahead of the carrier in its attacking direction, the same for both teams. The extract says the original code is asymmetric.
-8. **Loose rebounds.** The nearest piece recovers the ball at once, with ties going to the defending side.
-9. **Kickoff timing.** The 25-second turn timer does not run while a kickoff is pending, so a kickoff can't be forfeited.
-10. **Wide shots.** Wide or off-target shots give the ball to the defending keeper ("goal kick / keeper possession").
-11. **Passing the turn.** Players may end a turn without acting, the same as letting the timer run out.
+| Q | Decision | Built as |
+|---|---|---|
+| 1 | Row 1 at the top; Blue attacks up | Unchanged |
+| 2 | Kickoff at the centre on the halfway line; players may place pieces anywhere in a legal formation | Kickoff squares unchanged (H13 / I12, either side of the centre); "My set-up" editor with the rule 2.1 checks (`legalFormationSquare`, `validateFormation`), used through `homeLayout` / `awayLayout` |
+| 3 | Not answered | Kept: the receiver does not count as the shielding teammate |
+| 4 | Offside line: keep | Superseded by Q23 |
+| 5 | Offside before interceptions | `passOutcome` checks offside first |
+| 6a | The player chooses where the passer runs: forward, backward or sideways, in line with the receiver, who stays put | `oneTwoRuns`: any legal move square in a straight or diagonal line with the receiver; the action carries the chosen square |
+| 6b | A defender on the squares between intercepts; one next to the run square tackles under the tackle rules | Return lane only; then the reactive-tackle check on the runner |
+| 6c | One-two after a move: keep | Unchanged |
+| 7 | Connector front square: keep, direction per team | The square ahead in the carrier's own attacking direction |
+| 8 | A loose rebound stays on its square | No automatic recovery; collected by moving onto it |
+| 9 | Turn timer paused at kickoff | Unchanged |
+| 10 | Wide shot: keeper's ball | Unchanged |
+| 11 | An "End turn" option | Always available (once the kickoff pass is made) |
+| 12 | Shooting zones: keep | Unchanged |
+| 13, 23 | Offside as in real football: the keeper counts | Line = second-last opponent, keeper included; receiver must be in the opponent's half and ahead of the ball |
+| 14 | Passes unlimited for now | Unchanged |
+| 15 | The CPU plays one-twos, more often at higher levels | Master looks every turn and favours them; Baller considers them; Beginner on about one turn in five |
+| 16 | Move-then-pass in own half for anyone; Connector anywhere; only Frontliner, Flanker, Sparker may move then shoot | `afterMove` follow-up rules; standing shots allowed for any carrier in the zone |
+| 17 | 25-second timer for online and ranked only | `turnTimer` setting: on for online, off for CPU and local |
+| 19 | No buildup count | None |
+| 20 | Possession limit: 2 turns for ranked and the hardest CPU, 3 for regular online and easier levels | `stallLimit`: Master 2; Beginner, Baller, local and online 3 |
+| 21 | Keeper saves only shots within one square | Unchanged |
+| 22 | Default 2 × 10 minutes; 5, 10 or 15 against the CPU | `halfMinutes` |
+| 24 | Keeper may move anywhere in its 18-yard box | `inPenaltyArea`: columns D–M, 4 rows deep |
+| 18, 25, 26 | Fouls, restarts: "strategize a way to add them" | Proposal written for David's approval; not built yet |
+
+## Interpretations still awaiting confirmation
+
+1. **Pass shielding (Q3, unanswered).** The receiver does not count as the shielding teammate.
+2. **18-yard box size.** Not in the rules extract; scaled from a real pitch: columns D–M, 4 rows deep at each end.
+3. **Possession limit details.** "The ball moved" means it ended the turn on a different square or with a different piece. If the limit is reached and the team ends its turn, or runs out of time, without moving the ball, the ball goes to the nearest opponent. The middle CPU level (Baller) uses 3 turns.
+4. **Move then pass in the shooting zone.** Read literally, Q16 lets only the Connector pass after moving outside its own half. So an attacker that moves into the shooting zone may shoot but not pass.
+5. **One-two run directions.** Q6a's "moves diagonally either forward, backward, left or right" is read as: any direction within the passer's normal movement, ending in line with the receiver.
+6. **Kickoff squares.** "The centre of the board with the halfway line" is read as the existing squares either side of the centre (H13 for Blue, I12 for Red).
+7. **Order of the other pass checks.** After offside: adjacent block, then interception within 2, then contested reception.
+8. **Wide shots.** The defending keeper gets the ball ("goal kick").
 
 ## What testing showed
 
 - **Legality:** all 14 Ref's Eye calls and every lesson solution are checked against the engine. CPU-vs-CPU matches always end legally on the clock and replay exactly.
-- **Low scoring:** CPU-vs-CPU matches end 0–0 or 1–0. In these rules a stationary carrier is hard to dispossess: only specific roles in specific spots win the ball. A carrier that moves into the opponent's half outside the shooting zone can't pass afterwards, so advancing is risky.
+- **Low scoring:** CPU-vs-CPU matches still end 0–0 or 1–0 after David's changes (6 Nov). In these rules a stationary carrier is hard to dispossess: only specific roles in specific spots win the ball. A carrier that moves into the opponent's half outside the shooting zone can't pass afterwards, so advancing is risky.
 - **Holding possession:** a side can keep the ball by not moving the carrier and repositioning other pieces, since the 25-second timer only forfeits a turn. Decide whether this is intended, or whether a possession limit should push play forward. The extract mentions a "possession buildup count" in 4.1 without defining it.
 - **CPU strength:** good enough to test the rules, but it needs tuning for a satisfying Master level.
 
-## Differences from real football (relevant to the teaching goal)
+## Differences from real football (teaching goal)
 
-These are SYNOCHÍ design choices, not bugs. They matter if the game is presented as teaching football's real rules:
-
-- **Offside:** SYNOCHÍ ignores the keeper. In real football the keeper usually counts as one of the last two defenders.
-- **Keeper movement:** the keeper is confined to the six-yard box. A real keeper can go anywhere and only handles in the penalty area.
-- **No restarts:** there are no throw-ins, corners or goal kicks as restarts, and no fouls, free kicks, penalties or cards.
-
-The Ref's Eye quiz points out the offside difference. The v0.1 Laws Mode work (in git history) could become an optional "Laws of the Game" variant if David wants it.
+- **Offside:** now aligned with real football (Q23).
+- **Keeper:** may roam its 18-yard box (Q24); in real football a keeper may go anywhere but only handles inside that box.
+- **Restarts and fouls:** none yet. David asked for a plan (Q18, Q25, Q26); see the proposal in the questionnaire document.

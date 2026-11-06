@@ -13,14 +13,14 @@ export const ROLE_NAMES: Record<Role, string> = {
 };
 
 export const ROLE_SUMMARY: Record<Role, string> = {
-  FW: 'Striker. Up to 3 forward (straight or diagonal), 1 back, 2 sideways.',
-  WG: 'Winger. 3 straight forward; 2 diagonal forward, or 3 from the flank columns; 2 back; 2 sideways.',
+  FW: 'Striker. Up to 3 forward (straight or diagonal), 1 back, 2 sideways. Can move then shoot in the shooting zone.',
+  WG: 'Winger. 3 straight forward; 2 diagonal forward, or 3 from the flank columns; 2 back; 2 sideways. Can move then shoot in the shooting zone.',
   MF: 'Link player. 2 in any direction. Can move then pass from anywhere.',
   DM: 'Defensive mid. 2 forward from own half (1 from the opponent half), 3 back, 2 sideways. Tackles in own half or in a double-team.',
-  AM: 'Attacking mid. 3 straight forward, 2 diagonal forward, 2 back, 3 sideways. Cannot move then shoot.',
+  AM: 'Attacking mid. 3 straight forward, 2 diagonal forward, 2 back, 3 sideways. Can move then shoot in the shooting zone.',
   CB: 'Centre-back. 1 forward, 3 straight back, 2 diagonal back, 2 sideways. Tackles diagonally, or when the carrier has no clear pass in own half.',
   FB: 'Fullback. 2 forward; 3 straight back from the flank columns (otherwise 2); 3 diagonal back; 2 sideways. Tackles from the flank columns.',
-  GK: 'Goalkeeper. Up to 2 in any direction, never leaving its own six-yard box.',
+  GK: 'Goalkeeper. Up to 2 in any direction, anywhere inside its own 18-yard box.',
 };
 
 /**

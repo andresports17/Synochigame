@@ -16,6 +16,19 @@ export const INNER_GOAL_COLS = [6, 9] as const;
 export const KEEPER_BOX_COLS = [5, 10] as const;
 export const KEEPER_BOX_DEPTH = 3;
 
+/**
+ * Penalty ("18-yard") area: the Box Keeper may move anywhere inside its own
+ * (questionnaire Q24). Not defined in the rules extract; scaled from a real pitch
+ * (16.5 m × 40.3 m ≈ 4 rows × 10 columns, D–M). Confirm.
+ */
+export const PENALTY_COLS = [3, 12] as const;
+export const PENALTY_DEPTH = 4;
+
+export function inPenaltyArea(side: Side, c: Cell): boolean {
+  if (c.c < PENALTY_COLS[0] || c.c > PENALTY_COLS[1]) return false;
+  return side === 'home' ? c.r >= ROWS - PENALTY_DEPTH : c.r < PENALTY_DEPTH;
+}
+
 /** Centre circle area: rows 10–13, columns F–K. */
 export const CENTRE_ROWS = [10, 13] as const;
 export const CENTRE_COLS = [5, 10] as const;
@@ -26,7 +39,8 @@ export const isFlank = (c: number) => c <= 2 || c >= COLS - 3;
 /** Kickoff spots, one either side of halfway. Not fixed by the rules extract: confirm. */
 export const KICKOFF_SPOT: Record<Side, Cell> = { home: { c: 7, r: 12 }, away: { c: 8, r: 11 } };
 
-export const HALF_MS = 5 * 60 * 1000;
+export const HALF_MS = 10 * 60 * 1000; // Q22: default two 10-minute halves
+export const HALF_MINUTE_OPTIONS = [5, 10, 15] as const;
 export const TURN_MS = 25 * 1000;
 export const TURN_WARNING_MS = 10 * 1000;
 

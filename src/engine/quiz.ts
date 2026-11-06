@@ -67,11 +67,11 @@ const shoot = (pieceId: string): Action => ({ type: 'shoot', pieceId });
 
 export const QUIZ: QuizQuestion[] = [
   {
-    id: 'q-keeper-ignored',
+    id: 'q-keeper-counts',
     rule: RULE.offside,
     kind: 'pass',
-    prompt: 'The Frontliner is past every Red outfield player. Only Red\'s Box Keeper is behind it. The Connector passes.',
-    explain: 'In SYNOCHÍ the Box Keeper does not count for offside. The line is the last outfield defender, and the Frontliner is beyond it. (In real football the keeper usually counts as one of the last two.)',
+    prompt: 'The Frontliner is past Red\'s only Central Pillar. Only Red\'s Box Keeper is behind it. The Connector passes.',
+    explain: 'As in real football, the keeper counts as one of the last two defenders. Here the keeper is last and the Central Pillar is second-last, and the Frontliner is beyond it: offside.',
     setup: pos([['home', 'MF', 'H15'], ['home', 'FW', 'H9'], ['away', 'CB', 'F10'], ['away', 'GK', 'I2']], 0),
     action: pass('H0', 'H9'),
     expected: 'Offside',

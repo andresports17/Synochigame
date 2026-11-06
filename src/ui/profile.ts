@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react';
+import type { Layout } from '../engine';
 
 /**
  * Local player profile. In this build it lives in the browser only.
@@ -15,6 +16,8 @@ export interface Profile {
   homeKit: string;
   awayKit: string;
   formation: string;
+  /** The player's own legal set-up (Q2), stored for Blue; mirrored when playing Red. */
+  customLayout?: Layout | null;
   record: { w: number; d: number; l: number; gf: number; ga: number };
 }
 

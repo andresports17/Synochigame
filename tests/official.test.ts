@@ -14,10 +14,14 @@ import {
   getPiece,
   judge,
   legalMoves,
-  oneTwoRun,
+  mustPlayBall,
+  offsideLine,
+  oneTwoRuns,
   parseCell,
   passOutcome,
   planTurn,
+  presetLayout,
+  turnPlans,
   replay,
   shotOutcome,
   validateAction,
@@ -95,11 +99,16 @@ describe('4 · Turns', () => {
     expect(m.followUp).toMatchObject({ pieceId: 'H0', canPass: true });
   });
 
-  it('Sparker can move then pass, but not move then shoot', () => {
-    const s = buildPosition([['home', 'AM', 'H7'], ['away', 'GK', 'L1']], 0);
-    const n = applyAction(s, { type: 'move', pieceId: 'H0', to: parseCell('H5') });
-    expect(n.followUp).toMatchObject({ canShoot: false });
-    expect(validateAction(n, { type: 'shoot', pieceId: 'H0' })).toMatch(/Sparker/);
+  it('Q16: attacking pieces may move then shoot; others may not; only the Connector passes after moving outside its own half', () => {
+    const am = buildPosition([['home', 'AM', 'H7'], ['away', 'GK', 'L1']], 0);
+    const a = applyAction(am, { type: 'move', pieceId: 'H0', to: parseCell('H5') });
+    expect(a.followUp).toMatchObject({ canShoot: true, canPass: false });
+    const cb = buildPosition([['home', 'CB', 'H5'], ['home', 'FW', 'C5'], ['away', 'GK', 'L1']], 0);
+    const c = applyAction(cb, { type: 'move', pieceId: 'H0', to: parseCell('H4') });
+    expect(c.followUp).toBeNull(); // a Central Pillar can't move then shoot or pass up here
+    expect(c.turn).toBe('away');
+    // Standing still, any carrier in the zone may shoot.
+    expect(validateAction(cb, { type: 'shoot', pieceId: 'H0' })).toBeNull();
   });
 
   it('only the piece that moved may act again', () => {
@@ -132,16 +141,29 @@ describe('5 · Passing', () => {
     expect(passOutcome(s, getPiece(s, 'H0')!, parseCell('E13')).result).toBe('complete');
   });
 
-  it('one-two: compatible partner, automatic forward run onto the receiver\'s row, ball returns', () => {
+  it('Q6: one-two run chosen by the player, any direction in line with the receiver, ball returns', () => {
     const s = sc('o9-one-two').setup();
-    expect(oneTwoRun(s, getPiece(s, 'H0')!, getPiece(s, 'H1')!)).toEqual(parseCell('H15'));
-    const n = applyAction(s, { type: 'oneTwo', pieceId: 'H0', viaId: 'H1' });
+    const runs = cells(oneTwoRuns(s, getPiece(s, 'H0')!, getPiece(s, 'H1')!));
+    expect(runs).toEqual(expect.arrayContaining(['H15', 'J17', 'J19', 'F15'])); // forward, sideways, backward, diagonal
+    const n = applyAction(s, { type: 'oneTwo', pieceId: 'H0', viaId: 'H1', to: parseCell('J19') });
     expect(n.ball.carrier).toBe('H0');
-    expect(getPiece(n, 'H0')!.pos).toEqual(parseCell('H15'));
+    expect(getPiece(n, 'H0')!.pos).toEqual(parseCell('J19'));
+    expect(getPiece(n, 'H1')!.pos).toEqual(parseCell('J15')); // the return passer does not move
     expect(n.turn).toBe('away');
+    expect(validateAction(s, { type: 'oneTwo', pieceId: 'H0', viaId: 'H1', to: parseCell('G17') })).toMatch(/in line/);
     // Central Pillars may only play one-twos with an Anchor.
     const cb = buildPosition([['home', 'CB', 'H18'], ['home', 'FW', 'J16'], ['away', 'CB', 'A1']], 0);
-    expect(validateAction(cb, { type: 'oneTwo', pieceId: 'H0', viaId: 'H1' })).toMatch(/cannot play a one-two/);
+    expect(validateAction(cb, { type: 'oneTwo', pieceId: 'H0', viaId: 'H1', to: parseCell('H17') })).toMatch(/cannot play a one-two/);
+  });
+
+  it('Q6b: a defender on the return line intercepts; one next to the run square tackles under the tackle rules', () => {
+    const lane = buildPosition([['home', 'MF', 'H17'], ['home', 'AM', 'J15'], ['away', 'FW', 'J16'], ['away', 'CB', 'A1']], 0);
+    const cut = applyAction(lane, { type: 'oneTwo', pieceId: 'H0', viaId: 'H1', to: parseCell('J17') });
+    expect(cut.ball.carrier).toBe('A0');
+    const tackle = buildPosition([['home', 'MF', 'H17'], ['home', 'AM', 'J15'], ['away', 'DM', 'E14'], ['away', 'CB', 'A1']], 0);
+    const won = applyAction(tackle, { type: 'oneTwo', pieceId: 'H0', viaId: 'H1', to: parseCell('F15') });
+    expect(won.events.some((e) => e.kind === 'oneTwo')).toBe(true);
+    expect(won.ball.carrier).toBe('A0'); // the Anchor next to F15 makes a reactive tackle
   });
 });
 
@@ -208,21 +230,31 @@ describe('8 · Shooting', () => {
     expect(n.turn).toBe('away');
   });
 
-  it('blocked straight shot rebounds one square back', () => {
-    const s = buildPosition([['home', 'FW', 'G5'], ['home', 'AM', 'G6'], ['away', 'DM', 'G3'], ['away', 'GK', 'L1']], 0);
-    // Straight shot from G5: blocked at G3, rebound to G4 (empty) → nearest piece recovers.
+  it('Q8: a blocked shot rebounds one square back and stays loose until a piece moves onto it', () => {
+    // A Red Flanker blocks (a Flanker makes no reactive tackles, so Blue can collect safely).
+    const s = buildPosition([['home', 'FW', 'G5'], ['home', 'AM', 'K6'], ['away', 'WG', 'G3'], ['away', 'GK', 'L1']], 0);
     const n = applyAction(s, { type: 'shoot', pieceId: 'H0' });
     expect(n.events.some((e) => e.kind === 'block')).toBe(true);
-    expect(['H0', 'A0']).toContain(n.ball.carrier);
+    expect(n.ball).toEqual({ pos: parseCell('G4'), carrier: null });
+    const back = applyAction(n, { type: 'endTurn' });
+    const got = applyAction(back, { type: 'move', pieceId: 'H0', to: parseCell('G4') });
+    expect(got.ball.carrier).toBe('H0');
   });
 });
 
 describe('9 · Clock', () => {
+  it('Q17/Q22: 10-minute halves by default, turn timer off unless asked for', () => {
+    const s = createMatch({ homeFormation: '4-3-3', awayFormation: '4-3-3' });
+    expect(s.clock.halfMs).toBe(10 * 60 * 1000);
+    expect(s.turnTimer).toBe(false);
+    expect(createMatch({ homeFormation: '4-3-3', awayFormation: '4-3-3', halfMinutes: 15 }).clock.halfMs).toBe(15 * 60 * 1000);
+  });
+
   it('turn timer forfeits the turn; half and full time follow the match clock', () => {
-    let s = createMatch({ homeFormation: '4-3-3', awayFormation: '4-3-3' });
+    let s = createMatch({ homeFormation: '4-3-3', awayFormation: '4-3-3', turnTimer: true, halfMinutes: 5 });
     // The clock does not run until the opening pass.
     s = applyAction(s, { type: 'tick', ms: 60_000 });
-    expect(s.clock.halfMs).toBe(HALF_MS);
+    expect(s.clock.halfMs).toBe(5 * 60 * 1000);
     const fw = s.ball.carrier!;
     s = applyAction(s, { type: 'pass', pieceId: fw, to: s.pieces.find((p) => p.side === 'home' && p.role === 'DM')!.pos });
     expect(s.turn).toBe('away');
@@ -242,6 +274,62 @@ describe('9 · Clock', () => {
   });
 });
 
+describe("David's decisions (questionnaire, 6 Nov 2026)", () => {
+  it('Q23: the keeper counts for offside (second-last defender)', () => {
+    const s = buildPosition([['home', 'MF', 'H15'], ['home', 'FW', 'H9'], ['away', 'CB', 'F10'], ['away', 'GK', 'I2']], 0);
+    expect(offsideLine(s, 'home')).toBe(14); // the Central Pillar on row 10
+    // With only the keeper back, it is the last defender: one opponent is not enough for an offside line.
+    const one = buildPosition([['home', 'MF', 'H15'], ['home', 'FW', 'H4'], ['away', 'GK', 'H2']], 0);
+    expect(offsideLine(one, 'home')).toBeNull();
+  });
+
+  it('Q5: offside is checked before interception', () => {
+    const s = buildPosition([['home', 'MF', 'H15'], ['home', 'FW', 'H9'], ['away', 'AM', 'H14'], ['away', 'CB', 'F10'], ['away', 'GK', 'I2']], 0);
+    expect(passOutcome(s, getPiece(s, 'H0')!, parseCell('H9')).result).toBe('offside');
+  });
+
+  it('Q24: the keeper may move anywhere in its own 18-yard box, outfield pieces still stay out of the six-yard box', () => {
+    const s = buildPosition([['home', 'GK', 'H23'], ['away', 'FW', 'A1']], 1);
+    const moves = cells(legalMoves(s, getPiece(s, 'H0')!));
+    expect(moves).toContain('H21'); // up to the edge of the 18-yard box (rows 21–24)
+    expect(moves).toContain('F21');
+    expect(moves).not.toContain('H20');
+  });
+
+  it('Q20: possession limit forces the ball to move, and hands it over if it does not', () => {
+    let s = buildPosition([['home', 'DM', 'H18'], ['home', 'CB', 'E20'], ['away', 'FW', 'H10'], ['away', 'CB', 'A1']], 0);
+    s = { ...s, stallLimit: 2 };
+    for (let i = 0; i < 2; i++) {
+      s = applyAction(s, { type: 'move', pieceId: 'H1', to: parseCell(i === 0 ? 'E19' : 'E20') }); // ball stays still
+      s = applyAction(s, { type: 'endTurn' }); // Red
+    }
+    expect(mustPlayBall(s)).toBe(true);
+    expect(validateAction(s, { type: 'move', pieceId: 'H1', to: parseCell('E19') })).toMatch(/Possession limit/);
+    const handed = applyAction(s, { type: 'endTurn' });
+    expect(handed.ball.carrier!.startsWith('A')).toBe(true);
+    const moved = applyAction(s, { type: 'move', pieceId: 'H0', to: parseCell('H17') });
+    expect(moved.ball.carrier).toBe('H0');
+  });
+
+  it('Q2: a custom layout is used for kickoff', () => {
+    const layout = presetLayout('home', '4-3-3').map((l) => (l.role === 'WG' && l.pos.c === 2 ? { ...l, pos: parseCell('A17') } : l));
+    expect(validateFormation('home', layout.map((l, i) => ({ id: `x${i}`, side: 'home' as const, ...l })))).toEqual([]);
+    const s = createMatch({ homeFormation: '4-3-3', awayFormation: '4-3-3', homeLayout: layout });
+    expect(s.pieces.some((p) => p.side === 'home' && p.role === 'WG' && p.pos.c === 0 && p.pos.r === 16)).toBe(true);
+  });
+
+  it('Q15: the CPU considers one-twos, and its plans stay legal', () => {
+    const s = sc('o9-one-two').setup();
+    expect(turnPlans(s, true).some((p) => p.actions[0].type === 'oneTwo')).toBe(true);
+    expect(turnPlans(s, false).some((p) => p.actions[0].type === 'oneTwo')).toBe(false);
+    for (const level of ['beginner', 'baller', 'master'] as const) {
+      let n = s;
+      for (const a of planTurn(s, level)) n = applyAction(n, a); // throws if illegal
+      expect(n.turnNumber).toBeGreaterThan(s.turnNumber);
+    }
+  });
+});
+
 describe('Lessons', () => {
   it.each(SCENARIOS.map((x) => x.id))('%s starts unsolved', (id) => {
     expect(sc(id).success(sc(id).setup())).toBe(false);
@@ -252,7 +340,7 @@ describe('Lessons', () => {
     'o2-move-pass': [{ type: 'move', pieceId: 'H0', to: parseCell('H15') }, { type: 'pass', pieceId: 'H0', to: parseCell('L11') }],
     'o3-lanes': [{ type: 'pass', pieceId: 'H0', to: parseCell('E15') }],
     'o4-reception': [{ type: 'pass', pieceId: 'H0', to: parseCell('E13') }],
-    'o9-one-two': [{ type: 'oneTwo', pieceId: 'H0', viaId: 'H1' }],
+    'o9-one-two': [{ type: 'oneTwo', pieceId: 'H0', viaId: 'H1', to: parseCell('H15') }],
   };
   it.each(Object.keys(solutions))('%s can be solved', (id) => {
     let s: GameState = sc(id).setup();

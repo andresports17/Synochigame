@@ -8,6 +8,8 @@ import {
   INNER_GOAL_COLS,
   KEEPER_BOX_COLS,
   KEEPER_BOX_DEPTH,
+  PENALTY_COLS,
+  PENALTY_DEPTH,
   ROWS,
   canShootFrom,
   type Ball,
@@ -25,7 +27,7 @@ export const OY = LABEL + GOAL;
 export const BOARD_W = COLS * CELL + LABEL * 2;
 export const BOARD_H = ROWS * CELL + (LABEL + GOAL) * 2;
 
-export type OverlayKind = 'move' | 'moveDanger' | 'moveTackle' | 'pass' | 'passLost' | 'passOffside' | 'oneTwo' | 'pending';
+export type OverlayKind = 'move' | 'moveDanger' | 'moveTackle' | 'pass' | 'passLost' | 'passOffside' | 'oneTwo' | 'run' | 'pending';
 export interface Overlay {
   cell: Cell;
   kind: OverlayKind;
@@ -93,6 +95,17 @@ function Pitch({ theme }: { theme: BoardTheme }) {
       />
       <circle cx={OX + W / 2} cy={OY + H / 2} r={CELL * 2} {...ln} />
       <circle cx={OX + W / 2} cy={OY + H / 2} r={3} fill={theme.lines} />
+      {[0, 1].map((end) => (
+        // 18-yard box: the Box Keeper may move anywhere inside its own (Q24).
+        <rect
+          key={`pa${end}`}
+          x={OX + PENALTY_COLS[0] * CELL}
+          y={end ? OY + H - PENALTY_DEPTH * CELL : OY}
+          width={(PENALTY_COLS[1] - PENALTY_COLS[0] + 1) * CELL}
+          height={PENALTY_DEPTH * CELL}
+          {...ln}
+        />
+      ))}
       {[0, 1].map((end) => {
         const y = end ? OY + H - KEEPER_BOX_DEPTH * CELL : OY;
         const gy = end ? OY + H : OY - GOAL + 2;
@@ -177,6 +190,7 @@ const OVERLAY_COLOR: Record<OverlayKind, string> = {
   passLost: '#ff5a5a',
   passOffside: '#ffd400',
   oneTwo: '#e8c15c',
+  run: '#e8c15c',
   pending: 'var(--gold)',
 };
 
@@ -185,6 +199,8 @@ function OverlayMark({ o }: { o: Overlay }) {
   const y = cy(o.cell.r);
   const color = OVERLAY_COLOR[o.kind];
   switch (o.kind) {
+    case 'run':
+      return <rect x={x - 6} y={y - 6} width={12} height={12} transform={`rotate(45 ${x} ${y})`} fill={color} stroke="rgba(0,0,0,.4)" strokeWidth={1} />;
     case 'move':
     case 'moveDanger':
     case 'moveTackle':

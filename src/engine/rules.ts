@@ -2,10 +2,11 @@
  * SYNOCHÍ official rules engine.
  *
  * Implements "SYNOCHÍ Official Game Rules — Extraction Draft" (3 Nov 2026),
- * which describes David André's Replit build. Section numbers in comments and
- * in event `rule` tags refer to that document. Where the document marks a point
- * "Confirm" or leaves it open, the interpretation used here is tagged
- * INTERPRETATION and listed in docs/OFFICIAL_RULES_IMPLEMENTATION.md.
+ * which describes David André's Replit build, as amended by David's answers to
+ * the Rules & Launch Questionnaire (6 Nov 2026). Section numbers ("rule 5.2")
+ * refer to the extraction draft; "Q" numbers to the questionnaire. Remaining
+ * interpretations are tagged INTERPRETATION and listed in
+ * docs/OFFICIAL_RULES_IMPLEMENTATION.md.
  *
  * The engine is deterministic: the same setup and action log (including clock
  * ticks) always gives the same match, so a server can replay and verify results.
@@ -26,17 +27,17 @@ import {
   forwardDir,
   inAnyKeeperBox,
   inCentreCircle,
-  inKeeperBox,
   inOwnHalf,
+  inPenaltyArea,
   isFlank,
   onBoard,
   opponent,
   progress,
   sameCell,
 } from './board';
-import { FORMATION_NAMES, formationPieces } from './formations';
+import { FORMATION_NAMES, formationPieces, layoutPieces } from './formations';
 import { ONE_TWO_PARTNERS, ROLE_NAMES, maxRange } from './roles';
-import type { Action, Cell, EventKind, GameEvent, GameState, MatchSetup, Piece, Side, Stats } from './types';
+import type { Action, Cell, EventKind, GameEvent, GameState, MatchSetup, Piece, Role, Side, Stats } from './types';
 
 export class IllegalActionError extends Error {}
 
@@ -54,7 +55,11 @@ export const RULE = {
   shot: 'Rule 8 · Shooting',
   rebound: 'Rule 8.4 · Rebound',
   clock: 'Rule 9 · Kickoff and clock',
+  possession: 'Possession limit',
 } as const;
+
+/** Roles that may move and then shoot (Q16: attacking pieces only). */
+export const MOVE_AND_SHOOT_ROLES: ReadonlySet<Role> = new Set<Role>(['FW', 'WG', 'AM']);
 
 // ------------------------------------------------------------------ helpers
 
@@ -80,7 +85,10 @@ export function cloneState(s: GameState): GameState {
     followUp: s.followUp ? { ...s.followUp } : null,
     score: { ...s.score },
     formations: { ...s.formations },
+    layouts: { ...s.layouts },
     clock: { ...s.clock },
+    stall: { ...s.stall },
+    turnStart: { carrier: s.turnStart.carrier, pos: { ...s.turnStart.pos } },
     stats: { home: { ...s.stats.home }, away: { ...s.stats.away } },
     events: s.events.slice(),
   };
@@ -107,16 +115,19 @@ function giveBall(s: GameState, p: Piece) {
   s.ball = { pos: { ...p.pos }, carrier: p.id };
 }
 
-/** Match clock shown as minutes and seconds of real time remaining in the half. */
+/** Real-time clock shown as minutes and seconds. */
 export function clockText(ms: number) {
   const t = Math.max(0, Math.ceil(ms / 1000));
   return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
 }
 
+const nearestOf = (pieces: Piece[], to: Cell) => pieces.reduce((a, b) => (dist(b.pos, to) < dist(a.pos, to) ? b : a));
+
 // ------------------------------------------------------------------ setup and kickoff (rule 9)
 
 export function createMatch(setup: MatchSetup): GameState {
   const first = setup.firstKickoff ?? 'home';
+  const halfLength = setup.halfMinutes ? setup.halfMinutes * 60 * 1000 : HALF_MS;
   const s: GameState = {
     pieces: [],
     ball: { pos: { ...KICKOFF_SPOT[first] }, carrier: null },
@@ -127,9 +138,15 @@ export function createMatch(setup: MatchSetup): GameState {
     half: 1,
     score: { home: 0, away: 0 },
     formations: { home: setup.homeFormation, away: setup.awayFormation },
+    layouts: { home: setup.homeLayout ?? null, away: setup.awayLayout ?? null },
     firstKickoff: first,
     timed: setup.timed ?? true,
-    clock: { halfMs: HALF_MS, turnMs: TURN_MS },
+    halfLength,
+    turnTimer: setup.turnTimer ?? false,
+    clock: { halfMs: halfLength, turnMs: TURN_MS },
+    stallLimit: setup.stallLimit ?? null,
+    stall: { side: first, turns: 0 },
+    turnStart: { carrier: null, pos: { ...KICKOFF_SPOT[first] } },
     turnNumber: 1,
     stats: { home: emptyStats(), away: emptyStats() },
     events: [],
@@ -141,22 +158,27 @@ export function createMatch(setup: MatchSetup): GameState {
 /** Nearest empty square satisfying `ok`, searching outward from `from`. */
 function nearestSquare(s: GameState, from: Cell, ok: (c: Cell) => boolean): Cell {
   for (let radius = 1; radius < ROWS; radius++) {
-    let best: Cell | null = null;
     for (let r = from.r - radius; r <= from.r + radius; r++)
       for (let c = from.c - radius; c <= from.c + radius; c++) {
         const cell = { c, r };
-        if (dist(cell, from) !== radius || !onBoard(cell) || pieceAt(s, cell) || !ok(cell)) continue;
-        if (!best) best = cell;
+        if (dist(cell, from) === radius && onBoard(cell) && !pieceAt(s, cell) && ok(cell)) return cell;
       }
-    if (best) return best;
   }
   return from;
 }
 
+function teamPieces(s: GameState, side: Side): Piece[] {
+  const layout = s.layouts[side];
+  return layout ? layoutPieces(side, layout) : formationPieces(side, s.formations[side]);
+}
+
 function kickoff(s: GameState, side: Side) {
-  s.pieces = [...formationPieces('home', s.formations.home), ...formationPieces('away', s.formations.away)];
+  s.pieces = [...teamPieces(s, 'home'), ...teamPieces(s, 'away')];
   const kicker = s.pieces.find((p) => p.side === side && p.role === 'FW');
   if (!kicker) throw new Error('A formation needs a Frontliner to kick off');
+  // Clear the kickoff square if a custom layout put someone on it.
+  const blocker = pieceAt(s, KICKOFF_SPOT[side]);
+  if (blocker && blocker.id !== kicker.id) blocker.pos = nearestSquare(s, blocker.pos, (c) => inOwnHalf(blocker.side, c) && !inAnyKeeperBox(c));
   kicker.pos = { ...KICKOFF_SPOT[side] };
   // The defending side is moved out of the centre circle (rule 9).
   for (const p of s.pieces)
@@ -167,14 +189,32 @@ function kickoff(s: GameState, side: Side) {
   s.followUp = null;
   s.kickoffPending = true;
   s.clock.turnMs = TURN_MS;
+  s.stall = { side, turns: 0 };
+  s.turnStart = { carrier: kicker.id, pos: { ...kicker.pos } };
   log(s, 'kickoff', side, `${TEAM_NAMES[side]} kick off: the ${ROLE_NAMES.FW} must pass first`, RULE.clock);
 }
 
+/**
+ * End the current turn and start `side`'s. Also keeps the possession-limit count (Q20):
+ * a turn in which the team holding the ball leaves it where it was adds one.
+ */
 function nextTurn(s: GameState, side: Side) {
+  const holder = carrierOf(s);
+  const ballStill = !!holder && holder.id === s.turnStart.carrier && sameCell(s.ball.pos, s.turnStart.pos);
+  if (!ballStill) s.stall = { side: holder?.side ?? side, turns: 0 };
+  else if (holder.side === s.turn) s.stall = { side: holder.side, turns: s.stall.side === holder.side ? s.stall.turns + 1 : 1 };
   s.turn = side;
   s.followUp = null;
   s.turnNumber++;
   s.clock.turnMs = TURN_MS;
+  s.turnStart = { carrier: s.ball.carrier, pos: { ...s.ball.pos } };
+}
+
+/** Q20: true when the team to play has kept the ball still for the limit and must move it this turn. */
+export function mustPlayBall(s: GameState): boolean {
+  if (s.stallLimit === null || s.kickoffPending || s.phase !== 'playing') return false;
+  const c = carrierOf(s);
+  return !!c && c.side === s.turn && s.stall.side === s.turn && s.stall.turns >= s.stallLimit;
 }
 
 // ------------------------------------------------------------------ movement (rule 3)
@@ -187,8 +227,9 @@ export function legalMoves(s: GameState, p: Piece): Cell[] {
     for (let k = 1; k <= range; k++) {
       const c = { c: p.pos.c + dc * k, r: p.pos.r + dr * k };
       if (!onBoard(c) || pieceAt(s, c)) break;
-      // Only the Box Keeper may enter a six-yard box, and it may never leave its own (rule 3.2).
-      if (p.role === 'GK' ? !inKeeperBox(p.side, c) : inAnyKeeperBox(c)) break;
+      // Outfield pieces never enter a six-yard box (rule 3.2). The Box Keeper may go
+      // anywhere in its own penalty area (Q24).
+      if (p.role === 'GK' ? !inPenaltyArea(p.side, c) : inAnyKeeperBox(c)) break;
       out.push(c);
     }
   }
@@ -209,7 +250,7 @@ export type PassResult =
 
 const sign = (n: number) => (n > 0 ? 1 : n < 0 ? -1 : 0);
 
-/** Pass geometry: straight or 45° diagonal to a teammate (rule 5.1). */
+/** Pass geometry: straight or 45° diagonal (rule 5.1). */
 export function passLine(from: Cell, to: Cell): [number, number] | null {
   const dx = to.c - from.c;
   const dy = to.r - from.r;
@@ -219,27 +260,30 @@ export function passLine(from: Cell, to: Cell): [number, number] | null {
 }
 
 /**
- * Offside (rule 6), judged when the pass is played: the receiver is in the
- * opponent's half, ahead of the ball, and strictly beyond the deepest outfield
- * opponent. The Box Keeper does not count. No outfield defenders, no offside.
+ * The offside line for `attacking` as a progress value: the second-last opponent,
+ * keeper included, as in the Laws of the Game (Q23). Null when there are fewer than
+ * two opponents.
  */
-export function isOffside(s: GameState, passer: Piece, receiver: Piece): boolean {
-  const side = passer.side;
-  if (inOwnHalf(side, receiver.pos)) return false;
-  if (progress(side, receiver.pos.r) <= progress(side, passer.pos.r)) return false;
-  const line = offsideLine(s, side);
-  return line !== null && progress(side, receiver.pos.r) > line;
+export function offsideLine(s: GameState, attacking: Side): number | null {
+  const prog = s.pieces
+    .filter((q) => q.side !== attacking)
+    .map((q) => progress(attacking, q.pos.r))
+    .sort((a, b) => b - a);
+  return prog.length >= 2 ? prog[1] : null;
 }
 
-/** Progress value of the deepest outfield defender facing `attacking`, or null when there is none. */
-export function offsideLine(s: GameState, attacking: Side): number | null {
-  let deepest: number | null = null;
-  for (const q of s.pieces)
-    if (q.side !== attacking && q.role !== 'GK') {
-      const pr = progress(attacking, q.pos.r);
-      if (deepest === null || pr > deepest) deepest = pr;
-    }
-  return deepest;
+/**
+ * Offside (rule 6, Q13, Q23), judged when the pass is played: the receiver is in the
+ * opponent's half, ahead of the ball (a pass from a teammate further forward is never
+ * offside), and strictly beyond the second-last opponent. Level is onside.
+ */
+export function isOffside(s: GameState, passer: Piece, receiver: Piece | Cell): boolean {
+  const side = passer.side;
+  const at = 'pos' in receiver ? receiver.pos : receiver;
+  if (inOwnHalf(side, at)) return false;
+  if (progress(side, at.r) <= progress(side, passer.pos.r)) return false;
+  const line = offsideLine(s, side);
+  return line !== null && progress(side, at.r) > line;
 }
 
 /** What happens if `passer` passes to the teammate on `to` (no state change). */
@@ -247,6 +291,10 @@ export function passOutcome(s: GameState, passer: Piece, to: Cell, checkOffside 
   const [dc, dr] = passLine(passer.pos, to)!;
   const n = dist(passer.pos, to);
   const receiver = pieceAt(s, to)!;
+
+  // Q5: offside is checked first, before any interception.
+  if (checkOffside && isOffside(s, passer, receiver)) return { result: 'offside', offender: receiver };
+
   const ray: Cell[] = [];
   for (let k = 1; k < n; k++) ray.push({ c: passer.pos.c + dc * k, r: passer.pos.r + dr * k });
 
@@ -256,7 +304,7 @@ export function passOutcome(s: GameState, passer: Piece, to: Cell, checkOffside 
 
   // 5.2: opponents closer than 3 squares on the ray intercept, unless a teammate further down
   // the ray (at least 2 from the carrier) shields it. Opponents 3 or more away are ignored.
-  // INTERPRETATION: the receiver itself does not count as the shielding teammate.
+  // INTERPRETATION (Q3, unanswered): the receiver itself does not count as the shielding teammate.
   for (let k = 1; k < ray.length && k + 1 < 3; k++) {
     const q = pieceAt(s, ray[k]);
     if (!q || q.side === passer.side) continue;
@@ -266,8 +314,6 @@ export function passOutcome(s: GameState, passer: Piece, to: Cell, checkOffside 
     });
     if (!shield) return { result: 'intercepted', by: q };
   }
-
-  if (checkOffside && isOffside(s, passer, receiver)) return { result: 'offside', offender: receiver };
 
   // 5.3 pressure tackle: a defender adjacent to the receiver, straight on along the pass direction.
   const ahead = pieceAt(s, { c: to.c + dc, r: to.r + dr });
@@ -300,24 +346,20 @@ export function hasSafePass(s: GameState, carrier: Piece): boolean {
   return passTargets(s, carrier).some((q) => passOutcome(s, carrier, q.pos).result === 'complete');
 }
 
-/** The automatic support-run square for a one-two (rule 5.4), or null if the one-two is not available. */
-export function oneTwoRun(s: GameState, passer: Piece, via: Piece): Cell | null {
-  if (!ONE_TWO_PARTNERS[passer.role].includes(via.role)) return null;
-  if (!passLine(passer.pos, via.pos)) return null;
-  if (progress(passer.side, via.pos.r) <= progress(passer.side, passer.pos.r)) return null; // the run is forward
-  // INTERPRETATION: among legal squares on the receiver's row, take the one nearest the passer's
-  // column, then nearest the receiver.
-  const options = legalMoves(s, passer).filter((c) => c.r === via.pos.r);
-  if (!options.length) return null;
-  options.sort(
-    (a, b) => Math.abs(a.c - passer.pos.c) - Math.abs(b.c - passer.pos.c) || Math.abs(a.c - via.pos.c) - Math.abs(b.c - via.pos.c),
-  );
-  return options[0];
+/**
+ * One-two run squares (rule 5.4, Q6a): the passer may run forward, backward or sideways,
+ * within its normal movement, to any square in a straight or diagonal line with the
+ * receiver, who stays where it is.
+ */
+export function oneTwoRuns(s: GameState, passer: Piece, via: Piece): Cell[] {
+  if (!ONE_TWO_PARTNERS[passer.role].includes(via.role)) return [];
+  if (!passLine(passer.pos, via.pos)) return [];
+  return legalMoves(s, passer).filter((c) => !sameCell(c, via.pos) && passLine(via.pos, c));
 }
 
-/** One-two partners available to the carrier right now. */
+/** One-two partners available to the carrier right now (the first pass must be onside). */
 export function oneTwoPartners(s: GameState, passer: Piece): Piece[] {
-  return passTargets(s, passer).filter((q) => oneTwoRun(s, passer, q) && !isOffside(s, passer, q));
+  return passTargets(s, passer).filter((q) => !isOffside(s, passer, q) && oneTwoRuns(s, passer, q).length > 0);
 }
 
 // ------------------------------------------------------------------ tackling (rule 7)
@@ -348,8 +390,8 @@ export function activeTackleRule(s: GameState, defender: Piece, carrier: Piece):
       if (own) return 'Anchor own-half tackle';
       return doubleTeam ? 'Anchor double-team' : null;
     case 'MF': {
-      // INTERPRETATION: "directly in front" = the square one step ahead of the carrier in its
-      // attacking direction (symmetric for both teams; the original code is asymmetric).
+      // Q7: "directly in front" is the square one step ahead of the carrier in the
+      // carrier's own attacking direction, so it differs for each team.
       const front = { c: carrier.pos.c, r: carrier.pos.r + forwardDir(carrier.side) };
       if (own && sameCell(defender.pos, front)) return 'Connector front tackle';
       return doubleTeam ? 'Connector double-team' : null;
@@ -397,9 +439,9 @@ export function shotOutcome(s: GameState, shooter: Piece): ShotResult {
     if (q.role === 'GK' && q.side !== shooter.side) return { outcome: 'save', by: q, path, dir };
     return { outcome: 'block', by: q, path, dir };
   }
-  // 8.3: a keeper in its box within one square of any square on the path also saves.
+  // 8.3 / Q21: a keeper saves only a shot passing within one square of it.
   const keeper = s.pieces.find((q) => q.side !== shooter.side && q.role === 'GK');
-  if (keeper && inKeeperBox(keeper.side, keeper.pos) && path.some((sq) => dist(sq, keeper.pos) <= 1))
+  if (keeper && inPenaltyArea(keeper.side, keeper.pos) && path.some((sq) => dist(sq, keeper.pos) <= 1))
     return { outcome: 'save', by: keeper, path, dir };
   const end = path[path.length - 1];
   const onTarget = !!end && end.r === goalRow && end.c >= INNER_GOAL_COLS[0] && end.c <= INNER_GOAL_COLS[1];
@@ -429,12 +471,17 @@ export function validateAction(s: GameState, a: Action): string | null {
     return null;
   }
   if (s.phase !== 'playing') return s.phase === 'halftime' ? 'It is half-time' : 'The match is over';
-  if (a.type === 'endTurn') return s.kickoffPending ? 'The kickoff must be a pass' : null;
+  const forced = mustPlayBall(s);
+  if (a.type === 'endTurn') {
+    if (s.kickoffPending) return 'The kickoff must be a pass';
+    return null;
+  }
 
   const p = getPiece(s, a.pieceId);
   if (!p) return 'Unknown piece';
   if (p.side !== s.turn) return 'Not your turn';
   if (s.followUp && s.followUp.pieceId !== p.id) return 'Only the piece that moved can act again this turn';
+  if (forced && s.ball.carrier !== p.id) return 'Possession limit: the ball carrier must play this turn';
 
   switch (a.type) {
     case 'move': {
@@ -453,7 +500,7 @@ export function validateAction(s: GameState, a: Action): string | null {
       if (s.kickoffPending) return 'At kickoff the first action must be a pass';
       if (s.ball.carrier !== p.id) return 'Only the ball carrier can shoot';
       if (!canShootFrom(p.side, p.pos)) return 'Not in a shooting position';
-      if (s.followUp && p.role === 'AM') return 'A Sparker cannot move and then shoot';
+      if (s.followUp && !MOVE_AND_SHOOT_ROLES.has(p.role)) return 'Only Frontliners, Flankers and Sparkers can move and then shoot';
       return canShootNow(s, p) ? null : 'No shot is allowed after this move';
     }
     case 'oneTwo': {
@@ -464,7 +511,7 @@ export function validateAction(s: GameState, a: Action): string | null {
       if (!ONE_TWO_PARTNERS[p.role].includes(via.role)) return `${ROLE_NAMES[p.role]} cannot play a one-two with a ${ROLE_NAMES[via.role]}`;
       if (!passLine(p.pos, via.pos)) return 'Passes must be straight or diagonal';
       if (isOffside(s, p, via)) return 'The first pass would be offside';
-      if (!oneTwoRun(s, p, via)) return 'No legal run onto the receiver\'s row';
+      if (!oneTwoRuns(s, p, via).some((c) => sameCell(c, a.to))) return 'Run to a square in line with the receiver, within normal movement';
       return null;
     }
   }
@@ -473,15 +520,37 @@ export function validateAction(s: GameState, a: Action): string | null {
 // ------------------------------------------------------------------ resolution
 
 function endHalf(s: GameState) {
+  s.followUp = null;
   if (s.half === 1) {
     s.phase = 'halftime';
-    s.followUp = null;
     log(s, 'halftime', s.turn, `Half-time: ${TEAM_NAMES.home} ${s.score.home} – ${s.score.away} ${TEAM_NAMES.away}`, RULE.clock);
   } else {
     s.phase = 'finished';
-    s.followUp = null;
     log(s, 'fulltime', s.turn, `Full-time: ${TEAM_NAMES.home} ${s.score.home} – ${s.score.away} ${TEAM_NAMES.away}`, RULE.clock);
   }
+}
+
+function offsideRestart(s: GameState, offender: Piece) {
+  const opp = opponent(offender.side);
+  s.stats[offender.side].offsides++;
+  // The ball goes to the defending piece nearest the offender (rule 6).
+  const nearest = nearestOf(s.pieces.filter((q) => q.side === opp), offender.pos);
+  giveBall(s, nearest);
+  log(
+    s,
+    'offside',
+    offender.side,
+    `Offside! ${label(offender)} was beyond the second-last defender when the pass was played. Ball to ${label(nearest)}`,
+    RULE.offside,
+  );
+}
+
+/** Q20: the possession limit was reached and the ball did not move: it goes to the nearest opponent. */
+function stallHandover(s: GameState) {
+  const c = carrierOf(s)!;
+  const taker = nearestOf(s.pieces.filter((q) => q.side !== c.side), c.pos);
+  giveBall(s, taker);
+  log(s, 'stall', c.side, `Possession limit! ${TEAM_NAMES[c.side]} did not move the ball. Ball to ${label(taker)}`, RULE.possession);
 }
 
 /** Resolve a pass from the carrier; returns true if the passer's team kept the ball. */
@@ -512,39 +581,10 @@ function doPass(s: GameState, passer: Piece, to: Cell, quiet = false): boolean {
       giveBall(s, out.by);
       log(s, 'contested', opp, `${label(out.by)} wins the ball from the ${ROLE_NAMES[receiver.role]} as it arrives`, RULE.contested);
       return false;
-    case 'offside': {
-      st.offsides++;
-      // The ball goes to the defending piece nearest the offender (rule 6).
-      const nearest = s.pieces
-        .filter((q) => q.side === opp)
-        .reduce((a, b) => (dist(b.pos, out.offender.pos) < dist(a.pos, out.offender.pos) ? b : a));
-      giveBall(s, nearest);
-      log(
-        s,
-        'offside',
-        passer.side,
-        `Offside! ${label(out.offender)} was beyond the last outfield defender when the pass was played. Ball to ${label(nearest)}`,
-        RULE.offside,
-      );
+    case 'offside':
+      offsideRestart(s, out.offender);
       return false;
-    }
   }
-}
-
-/** A loose ball goes to the nearest piece; ties go to `priority` (INTERPRETATION of rule 8.4). */
-function recoverLoose(s: GameState, at: Cell, priority: Side) {
-  let best: Piece | undefined;
-  for (const p of s.pieces) {
-    if (!best) {
-      best = p;
-      continue;
-    }
-    const d = dist(p.pos, at);
-    const bd = dist(best.pos, at);
-    if (d < bd || (d === bd && p.side === priority && best.side !== priority)) best = p;
-  }
-  giveBall(s, best!);
-  log(s, 'recover', best!.side, `${label(best!)} recovers the loose ball`, RULE.rebound);
 }
 
 function afterMove(s: GameState, p: Piece) {
@@ -560,9 +600,10 @@ function afterMove(s: GameState, p: Piece) {
       nextTurn(s, t.side);
       return;
     }
-    // Rule 4: follow-up pass or shot by the same piece.
-    const canPass = inOwnHalf(p.side, p.pos) || canShootFrom(p.side, p.pos) || p.role === 'MF';
-    const canShoot = canShootFrom(p.side, p.pos) && p.role !== 'AM';
+    // Q16: any piece may move then pass in its own half; only a Connector may move then pass
+    // anywhere; only attacking pieces may move then shoot, inside the shooting zone.
+    const canPass = inOwnHalf(p.side, p.pos) || p.role === 'MF';
+    const canShoot = canShootFrom(p.side, p.pos) && MOVE_AND_SHOOT_ROLES.has(p.role);
     if (canPass || canShoot) {
       s.followUp = { pieceId: p.id, canPass, canShoot };
       return;
@@ -593,27 +634,46 @@ export function resolveAction(prev: GameState, a: Action): GameState {
     case 'tick': {
       if (!s.timed || s.kickoffPending) return s;
       s.clock.halfMs -= a.ms;
-      s.clock.turnMs -= a.ms;
+      if (s.turnTimer) s.clock.turnMs -= a.ms;
       if (s.clock.halfMs <= 0) {
         s.clock.halfMs = 0;
         endHalf(s);
-      } else if (s.clock.turnMs <= 0) {
-        log(s, 'timeout', s.turn, `Time! ${TEAM_NAMES[s.turn]} ran out of their 25 seconds and forfeit the turn`, RULE.clock);
+      } else if (s.turnTimer && s.clock.turnMs <= 0) {
+        if (mustPlayBall(s)) {
+          stallHandover(s);
+        } else {
+          log(s, 'timeout', s.turn, `Time! ${TEAM_NAMES[s.turn]} ran out of their 25 seconds and forfeit the turn`, RULE.clock);
+        }
         nextTurn(s, opponent(s.turn));
       }
       return s;
     }
     case 'resume': {
-      if (a.homeFormation) s.formations.home = a.homeFormation;
-      if (a.awayFormation) s.formations.away = a.awayFormation;
+      if (a.homeFormation) {
+        s.formations.home = a.homeFormation;
+        s.layouts.home = null;
+      }
+      if (a.awayFormation) {
+        s.formations.away = a.awayFormation;
+        s.layouts.away = null;
+      }
+      if (a.homeLayout) s.layouts.home = a.homeLayout;
+      if (a.awayLayout) s.layouts.away = a.awayLayout;
       s.phase = 'playing';
       s.half = 2;
-      s.clock.halfMs = HALF_MS;
+      s.clock.halfMs = s.halfLength;
       s.turnNumber++;
       kickoff(s, opponent(s.firstKickoff));
       return s;
     }
     case 'endTurn': {
+      // INTERPRETATION (Q20): ending the turn without moving the ball once the limit is reached
+      // gives the ball to the nearest opponent, the same as running out of time.
+      if (mustPlayBall(s)) {
+        stallHandover(s);
+        nextTurn(s, opponent(s.turn));
+        return s;
+      }
       log(s, 'endTurn', s.turn, `${TEAM_NAMES[s.turn]} end their turn`);
       nextTurn(s, opponent(s.turn));
       return s;
@@ -647,30 +707,36 @@ export function resolveAction(prev: GameState, a: Action): GameState {
     }
     case 'oneTwo': {
       const via = getPiece(s, a.viaId)!;
-      const run = oneTwoRun(s, p, via)!;
+      const run = { ...a.to };
       if (!doPass(s, p, via.pos, true)) {
         nextTurn(s, opponent(p.side));
         return s;
       }
-      p.pos = { ...run };
-      // Return leg: intercepted by a defender on the lane or next to the runner's square (INTERPRETATION).
+      p.pos = run;
+      // Q6b: the return pass is intercepted by a defender on the squares between.
+      const [dc, dr] = passLine(via.pos, run)!;
       const lane: Cell[] = [];
-      const step = sign(run.c - via.pos.c);
-      for (let c = via.pos.c + step; c !== run.c; c += step) lane.push({ c, r: run.r });
-      const thief =
-        s.pieces.find((q) => q.side !== p.side && lane.some((l) => sameCell(l, q.pos))) ??
-        s.pieces.find((q) => q.side !== p.side && adjacent(q.pos, run));
+      for (let k = 1; k < dist(via.pos, run); k++) lane.push({ c: via.pos.c + dc * k, r: via.pos.r + dr * k });
+      const thief = lane.map((c) => pieceAt(s, c)).find((q) => q && q.side !== p.side);
       if (thief) {
         s.stats[thief.side].interceptions++;
         giveBall(s, thief);
         log(s, 'intercept', thief.side, `${label(thief)} cuts out the return pass of the one-two`, RULE.oneTwo);
       } else if (isOffside(s, via, p)) {
-        doPass(s, via, run); // logs the offside
+        offsideRestart(s, p);
       } else {
         s.stats[p.side].passes++;
         s.stats[p.side].passesCompleted++;
         giveBall(s, p);
         log(s, 'oneTwo', p.side, `One-two: ${ROLE_NAMES[p.role]} → ${ROLE_NAMES[via.role]} → ${ROLE_NAMES[p.role]} at ${cellName(run)}`, RULE.oneTwo);
+        // Q6b: a defender next to the run square can still tackle under the tackling rules.
+        const t = reactiveTackler(s, p);
+        if (t) {
+          s.stats[t.side].tackles++;
+          s.stats[t.side].reactiveTackles++;
+          giveBall(s, t);
+          log(s, 'reactiveTackle', t.side, `Reactive tackle! ${label(t)} wins the ball as the one-two arrives`, RULE.tackle);
+        }
       }
       nextTurn(s, opponent(p.side));
       return s;
@@ -712,8 +778,9 @@ export function resolveAction(prev: GameState, a: Action): GameState {
             giveBall(s, there);
             log(s, 'rebound', there.side, `The rebound falls to ${label(there)} at ${cellName(reb)}`, RULE.rebound);
           } else {
+            // Q8: a loose rebound stays on its square until a piece moves onto it.
             s.ball = { pos: reb, carrier: null };
-            recoverLoose(s, reb, opp);
+            log(s, 'rebound', opp, `The rebound runs loose at ${cellName(reb)}`, RULE.rebound);
           }
         }
       }
@@ -743,11 +810,11 @@ export function replay(setup: MatchSetup, actions: Action[]): GameState {
   return s;
 }
 
-/** Every action the side to play may take right now (used by the UI and the CPU). */
+/** Every action the given piece may take right now (used by the UI and the CPU). */
 export function actionsFor(s: GameState, p: Piece) {
-  if (s.phase !== 'playing' || p.side !== s.turn || (s.followUp && s.followUp.pieceId !== p.id)) {
-    return { moves: [] as Cell[], passes: [] as Piece[], shoot: false, oneTwos: [] as Piece[] };
-  }
+  const none = { moves: [] as Cell[], passes: [] as Piece[], shoot: false, oneTwos: [] as Piece[] };
+  if (s.phase !== 'playing' || p.side !== s.turn || (s.followUp && s.followUp.pieceId !== p.id)) return none;
+  if (mustPlayBall(s) && s.ball.carrier !== p.id) return none;
   const moves = s.kickoffPending || s.followUp ? [] : legalMoves(s, p);
   const passes = canPassNow(s, p) ? passTargets(s, p) : [];
   const shoot = !validateAction(s, { type: 'shoot', pieceId: p.id });

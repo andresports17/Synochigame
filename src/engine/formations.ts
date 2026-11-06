@@ -1,5 +1,5 @@
 import { COLS, ROWS, inAnyKeeperBox, inCentreCircle, inKeeperBox, inOwnHalf, key } from './board';
-import type { Piece, Role, Side } from './types';
+import type { Layout, Piece, Role, Side } from './types';
 
 type Slot = [Role, number, number]; // role, column, depth (0 = own goal line)
 
@@ -70,6 +70,23 @@ export function formationPieces(side: Side, name: string): Piece[] {
     role,
     pos: side === 'home' ? { c, r: ROWS - 1 - depth } : { c: COLS - 1 - c, r: depth },
   }));
+}
+
+/** A preset as a layout (absolute positions for `side`), the starting point for a custom set-up. */
+export const presetLayout = (side: Side, name: string): Layout => formationPieces(side, name).map((p) => ({ role: p.role, pos: { ...p.pos } }));
+
+/** Pieces for a custom layout (Q2: any legal formation, placed by the player). */
+export function layoutPieces(side: Side, layout: Layout): Piece[] {
+  return layout.map((l, i) => ({ id: `${side === 'home' ? 'H' : 'A'}${i}`, side, role: l.role, pos: { ...l.pos } }));
+}
+
+/** Mirror a layout to the other side of the board (so a saved layout works for either team). */
+export const mirrorLayout = (layout: Layout): Layout => layout.map((l) => ({ role: l.role, pos: { c: COLS - 1 - l.pos.c, r: ROWS - 1 - l.pos.r } }));
+
+/** Whether `role` may start on `c` for `side` (rule 2.1): own half, out of the centre circle, the keeper in its six-yard box and nobody else in a six-yard box. */
+export function legalFormationSquare(side: Side, role: Role, c: { c: number; r: number }): boolean {
+  if (!inOwnHalf(side, c) || inCentreCircle(c)) return false;
+  return role === 'GK' ? inKeeperBox(side, c) : !inAnyKeeperBox(c);
 }
 
 /** Rule 2.1 checks for any formation (presets and custom). Returns a list of problems; empty means legal. */
