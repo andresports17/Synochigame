@@ -1,0 +1,38 @@
+{
+  "name": "synochi",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SYNOCHÍ by David André — The World's Game On Board",
+  "license": "UNLICENSED",
+  "author": "David Andre LLC",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "build:single": "vite build --mode single",
+    "test": "vitest run",
+    "server": "tsx server/index.ts",
+    "typecheck": "tsc --noEmit",
+    "build:demo": "vite build --mode single && node scripts/make-web-demo.mjs"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vite": "^6.4.1",
+    "vite-plugin-singlefile": "^2.1.0",
+    "vitest": "^2.1.8"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
