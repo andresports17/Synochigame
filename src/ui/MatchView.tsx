@@ -46,9 +46,12 @@ export function useLocalMatch(initial: GameState, controllers: Record<Side, Cont
   const ref = useRef(state);
   ref.current = state;
 
+  // Every action, clock ticks included, so the server can replay and verify the match.
+  const logRef = useRef<Action[]>([]);
   const dispatch = (a: Action) => {
     const next = applyAction(ref.current, a); // throws on an illegal action
     ref.current = next;
+    logRef.current.push(a);
     setState(next);
   };
 
@@ -114,7 +117,7 @@ export function useLocalMatch(initial: GameState, controllers: Record<Side, Cont
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.turnNumber, state.phase, paused]);
 
-  return { state, dispatch, cpuThinking, paused, setPaused };
+  return { state, dispatch, cpuThinking, paused, setPaused, log: () => logRef.current.slice() };
 }
 
 const EVENT_TONE: Partial<Record<GameEvent['kind'], string>> = {

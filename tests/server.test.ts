@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Server } from 'node:http';
 import { createApp } from '../server/index';
+import { Ledger } from '../server/ledger';
 
 let server: Server;
 let base = '';
 beforeAll(async () => {
-  server = createApp().listen(0);
+  server = createApp({ ledger: new Ledger() }).listen(0);
   await new Promise((r) => server.once('listening', r));
   const addr = server.address();
   base = `http://localhost:${typeof addr === 'object' && addr ? addr.port : 0}`;

@@ -28,8 +28,9 @@ The rules are **David André's official SYNOCHÍ rules** (extraction draft, 3 No
 | 9 lessons (one rule each) and the Ref's Eye quiz (14 calls) | Done |
 | Live match statistics, half-time formation changes | Done |
 | 5 preset formations with a rule-2.1 validator | Done; custom formation editor not built |
-| Locker: board themes and kits (cosmetic) | Done (stored in the browser) |
-| Accounts, server currency ledger, seasons, store billing, native apps, matchmaking | Not yet; see [docs/LAUNCH_PLAN.md](docs/LAUNCH_PLAN.md) |
+| Server accounts and currency ledger: guest accounts; Tactic Tokens, Gold Boots and Mission Medals kept on the server; rewards paid only after the server replays and verifies the match (including every CPU move and the clock), lesson or quiz; cosmetics bought at server prices | Done (JSON file store; move to Postgres for launch) |
+| Locker: board themes and kits (cosmetic) | Done |
+| Sign-in (beyond guest accounts), seasons and missions, store billing, native apps | Not yet; see [docs/LAUNCH_PLAN.md](docs/LAUNCH_PLAN.md) |
 
 ## Architecture
 
@@ -43,7 +44,7 @@ src/engine/       Pure TypeScript rules library shared by the client and the ser
   scenarios.ts    Lessons
   quiz.ts         Ref's Eye questions
 src/ui/           React web app
-server/           Express match server (online play with a server-side clock, result verification)
+server/           Express server: online play with a server-side clock, accounts and currency ledger (ledger.ts), result verification (verify.ts), reward and shop routes (accounts.ts)
 tests/            Vitest suites
 docs/             Rules implementation notes, launch plan
 ```

@@ -12,6 +12,8 @@
  * currency ledger in Postgres (see docs/LAUNCH_PLAN.md).
  */
 import express from 'express';
+import { registerAccountRoutes } from './accounts';
+import { Ledger } from './ledger';
 import { randomBytes, randomInt } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -80,9 +82,15 @@ function catchUpClock(m: OnlineMatch) {
   m.lastTick = now;
 }
 
-export function createApp() {
+/**
+ * `ledger`: where accounts and currencies are kept. By default a JSON file at
+ * LEDGER_FILE (or data/ledger.json); tests pass an in-memory ledger.
+ */
+export function createApp(opts: { ledger?: Ledger; now?: () => number } = {}) {
   const app = express();
-  app.use(express.json({ limit: '256kb' }));
+  app.use(express.json({ limit: '1mb' }));
+  const ledger = opts.ledger ?? new Ledger(process.env.LEDGER_FILE ?? join(dirname(fileURLToPath(import.meta.url)), '..', 'data', 'ledger.json'));
+  registerAccountRoutes(app, ledger, opts.now);
 
   app.get('/api/health', (_req, res) => res.json({ ok: true, matches: matches.size }));
 

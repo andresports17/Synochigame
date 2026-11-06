@@ -90,7 +90,7 @@ The LongPack quote request is already sent; send this as an addendum. The Panda 
 |---|---|---|
 | 0. Audit | Run the prototype's 22 test suites; settle the 11 open rule decisions; turn the CPU's late-game logic back on | Needs the Replit export |
 | Rules | Official rules implemented and tested here; 11 interpretations to confirm ([notes](OFFICIAL_RULES_IMPLEMENTATION.md)); optional Laws variant in [LAWS_MODE.md](LAWS_MODE.md) | David to confirm |
-| 1. Foundation | Move Tactic Tokens, Gold Boots and Mission Medals to a server ledger (they're editable on the device today); season config and Season 2 setup; move hosting off Replit; grant rewards for online matches after server validation | This repo's `/api/verify` replay (clock included) is a working example |
+| 1. Foundation | **Done:** server ledger for Tactic Tokens, Gold Boots and Mission Medals; guest accounts; rewards only after server verification (match replay, CPU-move check, clock check, lesson replay, quiz scoring); server-priced shop. **Still to do:** real sign-in, Postgres instead of the JSON file, managed hosting with backups and monitoring, Season 1 config | |
 | 2. Mobile apps | Capacitor iOS and Android builds, push notifications, haptics, deep links | |
 | 3. Store billing | In-app purchases with receipt validation; fix the 150 vs 135 token gap first | |
 | 4. Online play | Rewards for online matches; optional matchmaking queue using the existing hidden rating | |

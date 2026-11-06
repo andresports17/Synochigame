@@ -30,13 +30,14 @@ import {
   type Difficulty,
   type GameState,
   type Layout,
+  type MatchSetup,
   type Role,
   type Scenario,
   type Side,
 } from '../engine';
 import { Board } from './Board';
 import { MatchView, StatsTable, useLocalMatch, type Controller } from './MatchView';
-import { MATCH_REWARDS, MEDALS_PER_SCENARIO, TOKENS_PER_SCENARIO, useProfile, type Profile } from './profile';
+import { MATCH_REWARDS, MEDALS_PER_SCENARIO, TOKENS_PER_SCENARIO, useProfile, type Api, type Profile, type ProfileMode } from './profile';
 import { AWAY_KITS, BOARD_THEMES, HOME_KITS, type BoardTheme, type Kit } from './themes';
 
 type Kits = { home: Kit; away: Kit };
@@ -55,7 +56,7 @@ type Screen =
 
 export function App() {
   const [screen, setScreen] = useState<Screen>({ id: 'home' });
-  const [profile, update] = useProfile();
+  const [profile, update, mode, api] = useProfile();
   const theme = BOARD_THEMES.find((t) => t.id === profile.boardTheme) ?? BOARD_THEMES[0];
   const kits: Kits = {
     home: HOME_KITS.find((k) => k.id === profile.homeKit) ?? HOME_KITS[0],
@@ -73,7 +74,8 @@ export function App() {
         <button type="button" className="wordmark" onClick={home} aria-label="SYNOCHÍ home">
           SYNOCH<span className="i-accent">Í</span>
         </button>
-        <div className="wallet" aria-label="Your currencies">
+        <div className="wallet" aria-label="Your currencies" title={walletNote(mode)}>
+          {mode === 'local' && <span className="muted">Saved on this device</span>}
           <span title="Tactic Tokens, earned in matches"><b className="mono">{profile.tokens}</b> Tactic Tokens</span>
           <span title="Gold Boots, one per goal scored"><b className="mono">{profile.boots ?? 0}</b> Gold Boots</span>
           <span title="Mission Medals, earned in lessons"><b className="mono">{profile.medals}</b> Medals</span>
@@ -102,8 +104,13 @@ export function App() {
           kits={kits}
           onExit={home}
           onRematch={() => go({ ...screen, key: Date.now() })}
-          onFinish={(s) => {
-            if (screen.local) return;
+          api={api}
+          onFinish={async (s, log, matchId) => {
+            if (screen.local) return null;
+            if (api && matchId) {
+              const j = (await api.call('POST', `/api/cpu-matches/${matchId}/finish`, { actions: log })) as { earned?: Array<{ currency: string; amount: number; reason: string }> };
+              return (j.earned ?? []).map((e) => `+${e.amount} ${CURRENCY_LABEL[e.currency] ?? e.currency} (${e.reason})`).join(' · ');
+            }
             const gf = s.score.home;
             const ga = s.score.away;
             const res = gf > ga ? 'w' : gf === ga ? 'd' : 'l';
@@ -114,7 +121,7 @@ export function App() {
               boots: (p.boots ?? 0) + gf * MATCH_REWARDS.bootsPerGoal,
               record: { ...p.record, [res]: p.record[res] + 1, gf: p.record.gf + gf, ga: p.record.ga + ga },
             }));
-            return earned;
+            return `+${earned} Tactic Tokens · +${gf} Gold Boots`;
           }}
         />
       )}
@@ -130,11 +137,13 @@ export function App() {
           onExit={() => go({ id: 'learn' })}
           onRetry={() => go({ ...screen, key: Date.now() })}
           onNext={(id) => go({ id: 'lesson', scenarioId: id, key: Date.now() })}
-          onSuccess={(id) =>
+          onSuccess={(id, log) => {
+            if (api) return api.call('POST', `/api/lessons/${id}/complete`, { actions: log }).then(() => undefined);
             update((p) =>
               p.completed.includes(id) ? p : { ...p, completed: [...p.completed, id], medals: p.medals + MEDALS_PER_SCENARIO, tokens: p.tokens + TOKENS_PER_SCENARIO },
-            )
-          }
+            );
+            return Promise.resolve();
+          }}
         />
       )}
       {screen.id === 'quiz' && (
@@ -145,11 +154,16 @@ export function App() {
           passed={profile.completed.includes('refs-eye')}
           onBack={() => go({ id: 'learn' })}
           onRetry={() => go({ id: 'quiz', key: Date.now() })}
-          onPass={() => update((p) => (p.completed.includes('refs-eye') ? p : { ...p, completed: [...p.completed, 'refs-eye'], medals: p.medals + 3, tokens: p.tokens + 60 }))}
+          onDone={async (answers, score) => {
+            if (api) return ((await api.call('POST', '/api/quiz/submit', { answers })) as { passed: boolean }).passed;
+            const passed = score >= REFS_PASS;
+            if (passed) update((p) => (p.completed.includes('refs-eye') ? p : { ...p, completed: [...p.completed, 'refs-eye'], medals: p.medals + 3, tokens: p.tokens + 60 }));
+            return passed;
+          }}
         />
       )}
       {screen.id === 'formations' && <Formations profile={profile} update={update} onBack={home} theme={theme} kits={kits} />}
-      {screen.id === 'locker' && <Locker profile={profile} update={update} onBack={home} />}
+      {screen.id === 'locker' && <Locker profile={profile} update={update} onBack={home} api={api} />}
       {screen.id === 'rules' && <RulesPage onBack={home} />}
       {screen.id === 'online' && <Online profile={profile} onBack={home} theme={theme} kits={kits} />}
 
@@ -158,6 +172,16 @@ export function App() {
       </footer>
     </div>
   );
+}
+
+const CURRENCY_LABEL: Record<string, string> = { tokens: 'Tactic Tokens', boots: 'Gold Boots', medals: 'Medals', takeover: 'Takeover Tokens' };
+
+function walletNote(mode: ProfileMode) {
+  return mode === 'online'
+    ? 'Balances are kept on the SYNOCHÍ server and only change after the server has checked your result.'
+    : mode === 'local'
+      ? 'No SYNOCHÍ server here: progress is saved in this browser only.'
+      : 'Connecting…';
 }
 
 // ------------------------------------------------------------------ home
@@ -303,46 +327,73 @@ function FormationPicker({ label, value, onChange, id, custom }: { label: string
 
 // ------------------------------------------------------------------ match
 
-function LocalMatch({
-  local, difficulty, home, away, halfMinutes, customLayout, theme, kits, onExit, onRematch, onFinish,
-}: {
+type MatchProps = {
   local: boolean; difficulty: Difficulty; home: string; away: string; halfMinutes: number; customLayout: Layout | null; theme: BoardTheme; kits: Kits;
-  onExit: () => void; onRematch: () => void; onFinish: (s: GameState) => number | void;
-}) {
-  const initial = useMemo(
-    () =>
-      createMatch({
-        homeFormation: home === CUSTOM ? DEFAULT_FORMATION : home,
-        awayFormation: away === CUSTOM ? DEFAULT_FORMATION : away,
-        homeLayout: home === CUSTOM && customLayout ? customLayout : undefined,
-        awayLayout: away === CUSTOM && customLayout ? mirrorLayout(customLayout) : undefined,
-        halfMinutes,
-        stallLimit: stallLimitFor(local, difficulty),
-      }),
+  api: Api | null; onExit: () => void; onRematch: () => void; onFinish: (s: GameState, log: Action[], matchId: string | null) => Promise<string | null>;
+};
+
+/** Builds the match setup: locally, or (online, vs CPU) issued by the server so the result can be verified. */
+function LocalMatch(props: MatchProps) {
+  const { local, difficulty, home, away, halfMinutes, customLayout, api } = props;
+  const localSetup = useMemo<MatchSetup>(
+    () => ({
+      homeFormation: home === CUSTOM ? DEFAULT_FORMATION : home,
+      awayFormation: away === CUSTOM ? DEFAULT_FORMATION : away,
+      homeLayout: home === CUSTOM && customLayout ? customLayout : undefined,
+      awayLayout: away === CUSTOM && customLayout ? mirrorLayout(customLayout) : undefined,
+      halfMinutes,
+      stallLimit: stallLimitFor(local, difficulty),
+    }),
     [home, away, halfMinutes, customLayout, local, difficulty],
   );
+  const [issued, setIssued] = useState<{ id: string | null; setup: MatchSetup } | null>(api && !local ? null : { id: null, setup: localSetup });
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    if (!api || local || issued) return;
+    api
+      .call('POST', '/api/cpu-matches', { difficulty, homeFormation: localSetup.homeFormation, awayFormation: localSetup.awayFormation, homeLayout: localSetup.homeLayout, halfMinutes })
+      .then((j) => setIssued({ id: j.id as string, setup: j.setup as MatchSetup }))
+      .catch((e) => setErr((e as Error).message));
+  }, [api, local, issued, difficulty, localSetup, halfMinutes]);
+  if (err) return <main className="page"><p className="error">Could not start the match: {err}</p></main>;
+  if (!issued) return <main className="page"><p className="note">Starting the match…</p></main>;
+  return <MatchRunner {...props} matchId={issued.id} setup={issued.setup} />;
+}
+
+function MatchRunner({
+  local, difficulty, home, away, halfMinutes, customLayout, theme, kits, onExit, onRematch, onFinish, matchId, setup,
+}: MatchProps & { matchId: string | null; setup: MatchSetup }) {
+  const initial = useMemo(() => createMatch(setup), [setup]);
   const controllers: Record<Side, Controller> = { home: 'human', away: local ? 'human' : difficulty };
-  const { state, dispatch, cpuThinking, paused, setPaused } = useLocalMatch(initial, controllers);
-  const [earned, setEarned] = useState<number | null>(null);
+  const { state, dispatch, cpuThinking, paused, setPaused, log } = useLocalMatch(initial, controllers);
+  const [earned, setEarned] = useState<string | null>(null);
   const [htHome, setHtHome] = useState(home);
   const [htAway, setHtAway] = useState(away);
   const reported = useRef(false);
   useEffect(() => {
     if (state.phase === 'finished' && !reported.current) {
       reported.current = true;
-      const e = onFinish(state);
-      if (typeof e === 'number') setEarned(e);
+      onFinish(state, log(), matchId)
+        .then((e) => setEarned(e))
+        .catch((e) => setEarned(`Rewards not granted: ${(e as Error).message}`));
     }
-  }, [state, onFinish]);
+  }, [state, onFinish, log, matchId]);
+  void customLayout;
 
   const banner =
     state.phase === 'halftime' ? (
       <div className="result">
         <h3>Half-time <span className="mono">{state.score.home}–{state.score.away}</span></h3>
         <StatsTable state={state} />
-        <FormationPicker label={`${TEAM_NAMES.home} formation`} value={htHome} onChange={setHtHome} id="ht-home" />
-        {local && <FormationPicker label={`${TEAM_NAMES.away} formation`} value={htAway} onChange={setHtAway} id="ht-away" />}
-        <button type="button" className="btn primary" onClick={() => dispatch({ type: 'resume', homeFormation: htHome, awayFormation: local ? htAway : undefined })}>
+        <FormationPicker label={`${TEAM_NAMES.home} formation`} value={htHome} onChange={setHtHome} id="ht-home" custom={home === CUSTOM} />
+        {local && <FormationPicker label={`${TEAM_NAMES.away} formation`} value={htAway} onChange={setHtAway} id="ht-away" custom={away === CUSTOM} />}
+        <button
+          type="button"
+          className="btn primary"
+          onClick={() =>
+            dispatch({ type: 'resume', homeFormation: htHome === CUSTOM ? undefined : htHome, awayFormation: local && htAway !== CUSTOM ? htAway : undefined })
+          }
+        >
           Start second half
         </button>
       </div>
@@ -352,7 +403,7 @@ function LocalMatch({
           {state.score.home > state.score.away ? `${TEAM_NAMES.home} win` : state.score.home < state.score.away ? `${TEAM_NAMES.away} win` : 'Draw'}{' '}
           <span className="mono">{state.score.home}–{state.score.away}</span>
         </h3>
-        {earned !== null && <p>+{earned} Tactic Tokens · +{state.score.home} Gold Boots</p>}
+        {earned && <p>{earned}</p>}
         <StatsTable state={state} />
         <div className="row">
           <button type="button" className="btn primary" onClick={onRematch}>Rematch</button>
@@ -422,12 +473,13 @@ function Learn({ profile, onBack, onPick, onQuiz }: { profile: Profile; onBack: 
 function LessonRun({
   scenario, theme, kits, onExit, onRetry, onNext, onSuccess,
 }: {
-  scenario: Scenario; theme: BoardTheme; kits: Kits; onExit: () => void; onRetry: () => void; onNext: (id: string) => void; onSuccess: (id: string) => void;
+  scenario: Scenario; theme: BoardTheme; kits: Kits; onExit: () => void; onRetry: () => void; onNext: (id: string) => void; onSuccess: (id: string, log: Action[]) => Promise<void>;
 }) {
   const initial = useMemo(() => scenario.setup(), [scenario]);
   const [outcome, setOutcome] = useState<'success' | 'fail' | null>(null);
   const controllers: Record<Side, Controller> = { home: 'human', away: outcome ? 'human' : scenario.opponent };
-  const { state, dispatch, cpuThinking } = useLocalMatch(initial, controllers, 'relaxed');
+  const { state, dispatch, cpuThinking, log } = useLocalMatch(initial, controllers, 'relaxed');
+  const [rewardErr, setRewardErr] = useState<string | null>(null);
   const blueTurns = useRef(0);
   const prev = useRef({ n: state.turnNumber, side: state.turn });
   if (state.turnNumber !== prev.current.n) {
@@ -440,9 +492,9 @@ function LessonRun({
     if (outcome) return;
     if (scenario.success(state)) {
       setOutcome('success');
-      onSuccess(scenario.id);
+      onSuccess(scenario.id, log()).catch((e) => setRewardErr((e as Error).message));
     } else if (scenario.fail?.(state) || blueTurns.current >= scenario.maxTurns) setOutcome('fail');
-  }, [state, outcome, scenario, onSuccess]);
+  }, [state, outcome, scenario, onSuccess, log]);
 
   const idx = SCENARIOS.findIndex((s) => s.id === scenario.id);
   const next = SCENARIOS[idx + 1];
@@ -461,7 +513,7 @@ function LessonRun({
       {outcome && (
         <div className={`result ${outcome}`}>
           <h3>{outcome === 'success' ? 'Well played!' : 'Not this time'}</h3>
-          {outcome === 'success' && <p>+{MEDALS_PER_SCENARIO} Medal · +{TOKENS_PER_SCENARIO} Tactic Tokens (first clear only)</p>}
+          {outcome === 'success' && <p>{rewardErr ? `Reward not granted: ${rewardErr}` : `+${MEDALS_PER_SCENARIO} Medal · +${TOKENS_PER_SCENARIO} Tactic Tokens (first clear only)`}</p>}
           <div className="row">
             {outcome === 'success' && next && <button type="button" className="btn primary" onClick={() => onNext(next.id)}>Next: {next.title}</button>}
             <button type="button" className={`btn ${outcome === 'fail' ? 'primary' : 'ghost'}`} onClick={onRetry}>Retry</button>
@@ -493,7 +545,9 @@ function LessonRun({
 
 const REFS_PASS = 11;
 
-function RefsEye({ theme, kits, passed, onBack, onRetry, onPass }: { theme: BoardTheme; kits: Kits; passed: boolean; onBack: () => void; onRetry: () => void; onPass: () => void }) {
+function RefsEye({ theme, kits, passed, onBack, onRetry, onDone }: { theme: BoardTheme; kits: Kits; passed: boolean; onBack: () => void; onRetry: () => void; onDone: (answers: string[], score: number) => Promise<boolean> }) {
+  const [answers, setAnswers] = useState<string[]>([]);
+  const [result, setResult] = useState<boolean | null>(null);
   const [i, setI] = useState(0);
   const [answer, setAnswer] = useState<string | null>(null);
   const [score, setScore] = useState(0);
@@ -508,6 +562,7 @@ function RefsEye({ theme, kits, passed, onBack, onRetry, onPass }: { theme: Boar
   const choose = (opt: string) => {
     if (answer) return;
     setAnswer(opt);
+    setAnswers((a) => [...a, opt]);
     if (opt === verdict.call) setScore((n) => n + 1);
   };
   const next = () => {
@@ -516,7 +571,9 @@ function RefsEye({ theme, kits, passed, onBack, onRetry, onPass }: { theme: Boar
       setAnswer(null);
     } else {
       setDone(true);
-      if (score >= REFS_PASS) onPass();
+      onDone(answers, score)
+        .then(setResult)
+        .catch(() => setResult(score >= REFS_PASS));
     }
   };
 
@@ -526,7 +583,7 @@ function RefsEye({ theme, kits, passed, onBack, onRetry, onPass }: { theme: Boar
         <BackBar title="Ref's Eye" onBack={onBack} />
         <div className={`result ${score >= REFS_PASS ? 'success' : 'fail'}`}>
           <h3>{score} / {QUIZ.length} correct calls</h3>
-          <p>{score >= REFS_PASS ? (passed ? 'Passed again. Sharp eyes.' : 'Passed! +3 Medals, +60 Tactic Tokens') : `Score ${REFS_PASS} or more to pass.`}</p>
+          <p>{result === null ? 'Checking your calls…' : result ? (passed ? 'Passed again. Sharp eyes.' : 'Passed! +3 Medals, +60 Tactic Tokens') : `Score ${REFS_PASS} or more to pass.`}</p>
           <div className="row">
             <button type="button" className="btn primary" onClick={onRetry}>Try again</button>
             <button type="button" className="btn ghost" onClick={onBack}>Back to lessons</button>
@@ -689,7 +746,16 @@ function RoleList() {
 
 // ------------------------------------------------------------------ locker
 
-function Locker({ profile, update, onBack }: { profile: Profile; update: (fn: (p: Profile) => Profile) => void; onBack: () => void }) {
+function Locker({ profile, update, onBack, api }: { profile: Profile; update: (fn: (p: Profile) => Profile) => void; onBack: () => void; api: Api | null }) {
+  const [err, setErr] = useState<string | null>(null);
+  const buy = (id: string, price: number, field: 'boardTheme' | 'homeKit' | 'awayKit') => {
+    setErr(null);
+    if (!api) return update((p) => ({ ...p, tokens: p.tokens - price, owned: [...p.owned, id], [field]: id }));
+    api
+      .call('POST', '/api/shop/buy', { itemId: id })
+      .then(() => update((p) => ({ ...p, [field]: id })))
+      .catch((e) => setErr((e as Error).message));
+  };
   const sections = [
     { title: 'Board themes', items: BOARD_THEMES, field: 'boardTheme' as const, swatch: (i: (typeof BOARD_THEMES)[number]) => `linear-gradient(135deg, ${i.grassA} 0 50%, ${i.frame} 50%)` },
     { title: `${TEAM_NAMES.home} kits`, items: HOME_KITS, field: 'homeKit' as const, swatch: (i: Kit) => i.fill },
@@ -699,6 +765,7 @@ function Locker({ profile, update, onBack }: { profile: Profile; update: (fn: (p
     <main className="page">
       <BackBar title="Locker" onBack={onBack} />
       <p className="note">Everything here is cosmetic. Nothing you unlock changes how pieces play.</p>
+      {err && <p className="error">{err}</p>}
       {sections.map((sec) => (
         <section key={sec.title} className="stack">
           <h3 className="eyebrow">{sec.title}</h3>
@@ -719,7 +786,7 @@ function Locker({ profile, update, onBack }: { profile: Profile; update: (fn: (p
                       type="button"
                       className="btn primary small"
                       disabled={profile.tokens < item.price}
-                      onClick={() => update((p) => ({ ...p, tokens: p.tokens - item.price, owned: [...p.owned, item.id], [sec.field]: item.id }))}
+                      onClick={() => buy(item.id, item.price, sec.field)}
                     >
                       {item.price} tokens
                     </button>
