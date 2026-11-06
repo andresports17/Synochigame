@@ -1,12 +1,14 @@
 # SYNOCHÍ™ — The World's Game On Board
 
-**By David André.** A deterministic football strategy board game: 22 pieces on a 16 × 24 pitch, three actions per turn, no dice. This repository holds the digital game (web now, iOS and Android next) and the match server.
+*The most innovative soccer/football/futbol game ever created.*
+
+**By David André.** A turn-based soccer-chess game: 22 role-based pieces on a 24 × 16 grid, one piece a turn, two five-minute halves, nothing random. This repository holds the digital game (web now, iOS and Android next) and the match server.
 
 ## Quick start
 
 ```bash
 npm install
-npm test            # rules engine + server tests
+npm test            # official-rules engine + server tests
 npm run dev         # web app at http://localhost:5173 (start `npm run server` too for online play)
 npm run build       # production build into dist/
 npm run server      # serves dist/ and the match API on http://localhost:8787

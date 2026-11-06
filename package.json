@@ -29,5 +29,8 @@
     "vite": "^6.4.1",
     "vite-plugin-singlefile": "^2.1.0",
     "vitest": "^2.1.8"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }
