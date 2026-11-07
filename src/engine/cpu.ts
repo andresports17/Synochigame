@@ -41,6 +41,10 @@ export function turnPlans(s: GameState, withOneTwos = false): Plan[] {
       const a: Action = { type: 'shoot', pieceId: p.id };
       add([a], resolveAction(s, a));
     }
+    for (const to of o.clears) {
+      const a: Action = { type: 'clear', pieceId: p.id, to };
+      add([a], resolveAction(s, a));
+    }
     if (withOneTwos)
       for (const q of o.oneTwos)
         for (const to of oneTwoRuns(s, p, q)) {
@@ -61,6 +65,10 @@ export function turnPlans(s: GameState, withOneTwos = false): Plan[] {
         }
         if (fo.shoot) {
           const a: Action = { type: 'shoot', pieceId: p.id };
+          add([m, a], resolveAction(ns, a));
+        }
+        for (const to of fo.clears) {
+          const a: Action = { type: 'clear', pieceId: p.id, to };
           add([m, a], resolveAction(ns, a));
         }
       } else add([m], ns);

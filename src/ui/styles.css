@@ -304,7 +304,7 @@ button, input, select { font: inherit; color: inherit; }
   .scorebar .team { font-size: 17px; }
   .scorebar .score { font-size: 32px; }
   .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .modes { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .modes { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 
 .callout { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid #ffd400; border-radius: 10px; padding: 10px 14px; display: flex; flex-direction: column; gap: 4px; }
@@ -325,7 +325,7 @@ button, input, select { font: inherit; color: inherit; }
 .turn-timer b { position: relative; font-size: 12px; }
 .turn-timer.warn i { background: var(--bad); opacity: 0.55; }
 .turn-timer.warn b { color: var(--bad); }
-.modes { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.modes { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .legend { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 12px; color: var(--muted); }
 .legend li { display: flex; align-items: center; gap: 5px; }
 .legend i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; border: 1px solid rgba(0,0,0,.3); }

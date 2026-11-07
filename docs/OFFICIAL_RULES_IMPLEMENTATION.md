@@ -56,7 +56,7 @@ David answered the [Rules & Launch Questionnaire](https://claude.ai/artifact/JAc
 | 21 | Keeper saves only shots within one square | Unchanged |
 | 22 | Default 2 × 10 minutes; 5, 10 or 15 against the CPU | `halfMinutes` |
 | 24 | Keeper may move anywhere in its 18-yard box | `inPenaltyArea`: columns D–M, 4 rows deep |
-| 18, 25, 26 | Fouls, restarts: "strategize a way to add them" | Proposal written for David's approval; not built yet |
+| 18, 25, 26 | Fouls, restarts: "strategize a way to add them" | **Stage 1 (restarts) built**, on by default and switchable in setup: clearances over the touchline or goal line, throw-ins (pass up to 4 squares), corners, goal kicks (including wide shots), rebounds going out; no offside from restarts, no tackles while the ball is out, an untaken restart hands the ball over. Stages 2–3 (fouls, free kicks, penalties, cards) wait for David's answers P2–P4 |
 
 ## Interpretations still awaiting confirmation
 
@@ -80,4 +80,4 @@ David answered the [Rules & Launch Questionnaire](https://claude.ai/artifact/JAc
 
 - **Offside:** now aligned with real football (Q23).
 - **Keeper:** may roam its 18-yard box (Q24); in real football a keeper may go anywhere but only handles inside that box.
-- **Restarts and fouls:** none yet. David asked for a plan (Q18, Q25, Q26); see the proposal in the questionnaire document.
+- **Restarts:** throw-ins, goal kicks and corners built (stage 1). **Fouls:** not yet; stages 2–3 of the proposal wait for David's choices.

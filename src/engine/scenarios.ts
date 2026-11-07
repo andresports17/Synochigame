@@ -48,6 +48,8 @@ export function buildPosition(specs: Spec[], ballWith: number, turn: Side = 'hom
     turnTimer: false,
     clock: { halfMs: HALF_MS, turnMs: TURN_MS },
     stallLimit: null,
+    restartsEnabled: false,
+    restart: null,
     stall: { side: turn, turns: 0 },
     turnStart: { carrier: carrier.id, pos: { ...carrier.pos } },
     turnNumber: 1,
@@ -207,6 +209,23 @@ export const SCENARIOS: Scenario[] = [
       buildPosition([['home', 'MF', 'H17'], ['home', 'AM', 'J15'], ['away', 'FW', 'D12'], ['away', 'CB', 'H8']], 0),
     success: (s) => s.events.some((e) => e.kind === 'oneTwo'),
     fail: redHas,
+  },
+  {
+    id: 'o10-out-of-play',
+    title: '10 · Ball out of play',
+    rule: 'Laws 9, 15–17 · Restarts',
+    brief:
+      'When the ball leaves the pitch, the team that did not touch it last restarts. Over the touchline: a throw-in (a pass of up to 4 squares). Over your own goal line: a corner to the other team. Over theirs: their goal kick. Under pressure, clearing it out can be safer than losing it.',
+    tips: ['Your Defensive Flanker is boxed in.', 'Select it, choose Clear, and tap the arrow beyond the touchline.'],
+    objective: 'Clear the ball over the touchline.',
+    maxTurns: 1,
+    opponent: 'pass',
+    setup: () => ({
+      ...buildPosition([['home', 'FB', 'O14'], ['home', 'MF', 'H18'], ['away', 'FW', 'N13'], ['away', 'WG', 'N15'], ['away', 'AM', 'M16']], 0),
+      restartsEnabled: true,
+    }),
+    success: (s) => s.restart?.type === 'throwIn' && s.restart.side === 'away',
+    fail: (s) => !!s.ball.carrier?.startsWith('A') && !s.restart,
   },
 ];
 

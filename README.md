@@ -25,7 +25,8 @@ The rules are **David André's official SYNOCHÍ rules** (extraction draft, 3 No
 | CPU: Beginner, Baller, Master | Done (needs balance tuning) |
 | Play vs CPU (official real-time clock or relaxed), local two-player, online invite codes with a server-side clock | Done |
 | Result verification by replaying the action log (`POST /api/verify`) | Done |
-| 9 lessons (one rule each) and the Ref's Eye quiz (14 calls) | Done |
+| Ball out of play: clearances, throw-ins, goal kicks, corners (stage 1 of the restarts proposal; switchable) | Done |
+| 10 lessons (one rule each) and the Ref's Eye quiz (14 calls) | Done |
 | Live match statistics, half-time formation changes | Done |
 | 5 preset formations with a rule-2.1 validator | Done; custom formation editor not built |
 | Server accounts and currency ledger: guest accounts; Tactic Tokens, Gold Boots and Mission Medals kept on the server; rewards paid only after the server replays and verifies the match (including every CPU move and the clock), lesson or quiz; cosmetics bought at server prices | Done (JSON file store; move to Postgres for launch) |

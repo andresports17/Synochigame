@@ -45,7 +45,7 @@ type Kits = { home: Kit; away: Kit };
 type Screen =
   | { id: 'home' }
   | { id: 'setup'; local: boolean }
-  | { id: 'match'; key: number; local: boolean; difficulty: Difficulty; home: string; away: string; halfMinutes: number }
+  | { id: 'match'; key: number; local: boolean; difficulty: Difficulty; home: string; away: string; halfMinutes: number; restarts: boolean }
   | { id: 'learn' }
   | { id: 'lesson'; scenarioId: string; key: number }
   | { id: 'quiz'; key: number }
@@ -88,7 +88,7 @@ export function App() {
           local={screen.local}
           profile={profile}
           onBack={home}
-          onStart={(difficulty, h, a, halfMinutes) => go({ id: 'match', key: Date.now(), local: screen.local, difficulty, home: h, away: a, halfMinutes })}
+          onStart={(difficulty, h, a, halfMinutes, restarts) => go({ id: 'match', key: Date.now(), local: screen.local, difficulty, home: h, away: a, halfMinutes, restarts })}
         />
       )}
       {screen.id === 'match' && (
@@ -99,6 +99,7 @@ export function App() {
           home={screen.home}
           away={screen.away}
           halfMinutes={screen.halfMinutes}
+          restarts={screen.restarts}
           customLayout={profile.customLayout ?? null}
           theme={theme}
           kits={kits}
@@ -263,9 +264,10 @@ function BackBar({ title, onBack }: { title: string; onBack: () => void }) {
 
 const CUSTOM = 'custom';
 
-function Setup({ local, profile, onBack, onStart }: { local: boolean; profile: Profile; onBack: () => void; onStart: (d: Difficulty, h: string, a: string, halfMinutes: number) => void }) {
+function Setup({ local, profile, onBack, onStart }: { local: boolean; profile: Profile; onBack: () => void; onStart: (d: Difficulty, h: string, a: string, halfMinutes: number, restarts: boolean) => void }) {
   const [difficulty, setDifficulty] = useState<Difficulty>('baller');
   const [halfMinutes, setHalfMinutes] = useState(10);
+  const [restarts, setRestarts] = useState(true);
   const [h, setH] = useState(profile.formation);
   const [a, setA] = useState('4-4-2');
   const hasCustom = !!profile.customLayout;
@@ -294,6 +296,21 @@ function Setup({ local, profile, onBack, onStart }: { local: boolean; profile: P
           </label>
         ))}
       </fieldset>
+      <fieldset className="choices">
+        <legend>Ball out of play</legend>
+        {(
+          [
+            [true, 'Restarts on', 'The ball can go out: throw-ins, goal kicks and corners, as in the Laws of the Game.'],
+            [false, 'Restarts off', 'The ball never leaves the pitch; wide shots go to the keeper.'],
+          ] as [boolean, string, string][]
+        ).map(([v, label, blurb]) => (
+          <label key={label} className={`choice ${v === restarts ? 'on' : ''}`}>
+            <input type="radio" name="restarts" id={`restarts-${v}`} checked={v === restarts} onChange={() => setRestarts(v)} />
+            <strong>{label}</strong>
+            <span>{blurb}</span>
+          </label>
+        ))}
+      </fieldset>
       <div className="two-col">
         <FormationPicker label={`${TEAM_NAMES.home} formation${local ? '' : ' (you)'}`} value={h} onChange={setH} id="fh" custom={hasCustom} />
         <FormationPicker label={`${TEAM_NAMES.away} formation${local ? '' : ' (CPU)'}`} value={a} onChange={setA} id="fa" custom={hasCustom && local} />
@@ -301,7 +318,7 @@ function Setup({ local, profile, onBack, onStart }: { local: boolean; profile: P
       <p className="note">
         {TEAM_NAMES.home} kick off and attack up the board. Formations can be changed at half-time. The 25-second turn timer applies to online play.
       </p>
-      <button type="button" className="btn primary big" onClick={() => onStart(difficulty, h, a, halfMinutes)}>Kick off</button>
+      <button type="button" className="btn primary big" onClick={() => onStart(difficulty, h, a, halfMinutes, restarts)}>Kick off</button>
     </main>
   );
 }
@@ -328,13 +345,13 @@ function FormationPicker({ label, value, onChange, id, custom }: { label: string
 // ------------------------------------------------------------------ match
 
 type MatchProps = {
-  local: boolean; difficulty: Difficulty; home: string; away: string; halfMinutes: number; customLayout: Layout | null; theme: BoardTheme; kits: Kits;
+  local: boolean; difficulty: Difficulty; home: string; away: string; halfMinutes: number; restarts: boolean; customLayout: Layout | null; theme: BoardTheme; kits: Kits;
   api: Api | null; onExit: () => void; onRematch: () => void; onFinish: (s: GameState, log: Action[], matchId: string | null) => Promise<string | null>;
 };
 
 /** Builds the match setup: locally, or (online, vs CPU) issued by the server so the result can be verified. */
 function LocalMatch(props: MatchProps) {
-  const { local, difficulty, home, away, halfMinutes, customLayout, api } = props;
+  const { local, difficulty, home, away, halfMinutes, restarts, customLayout, api } = props;
   const localSetup = useMemo<MatchSetup>(
     () => ({
       homeFormation: home === CUSTOM ? DEFAULT_FORMATION : home,
@@ -343,15 +360,16 @@ function LocalMatch(props: MatchProps) {
       awayLayout: away === CUSTOM && customLayout ? mirrorLayout(customLayout) : undefined,
       halfMinutes,
       stallLimit: stallLimitFor(local, difficulty),
+      restarts,
     }),
-    [home, away, halfMinutes, customLayout, local, difficulty],
+    [home, away, halfMinutes, customLayout, local, difficulty, restarts],
   );
   const [issued, setIssued] = useState<{ id: string | null; setup: MatchSetup } | null>(api && !local ? null : { id: null, setup: localSetup });
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
     if (!api || local || issued) return;
     api
-      .call('POST', '/api/cpu-matches', { difficulty, homeFormation: localSetup.homeFormation, awayFormation: localSetup.awayFormation, homeLayout: localSetup.homeLayout, halfMinutes })
+      .call('POST', '/api/cpu-matches', { difficulty, homeFormation: localSetup.homeFormation, awayFormation: localSetup.awayFormation, homeLayout: localSetup.homeLayout, halfMinutes, restarts })
       .then((j) => setIssued({ id: j.id as string, setup: j.setup as MatchSetup }))
       .catch((e) => setErr((e as Error).message));
   }, [api, local, issued, difficulty, localSetup, halfMinutes]);
@@ -417,7 +435,7 @@ function MatchRunner({
       <div className="backbar">
         <button type="button" className="btn ghost small" onClick={onExit}>← Leave match</button>
         <span className="muted">
-          {local ? 'Local match' : `vs CPU · ${DIFFICULTIES[difficulty].label}`} · 2 × {halfMinutes} min · {state.layouts.home ? 'My set-up' : state.formations.home} v {state.layouts.away ? 'My set-up' : state.formations.away}
+          {local ? 'Local match' : `vs CPU · ${DIFFICULTIES[difficulty].label}`} · 2 × {halfMinutes} min · restarts {state.restartsEnabled ? 'on' : 'off'} · {state.layouts.home ? 'My set-up' : state.formations.home} v {state.layouts.away ? 'My set-up' : state.formations.away}
         </span>
       </div>
       <MatchView
@@ -850,6 +868,14 @@ function RulesPage({ onBack }: { onBack: () => void }) {
         <li>From columns G–J the shot goes straight; from outside, diagonally toward goal.</li>
         <li>The first piece on the path stops it: the keeper saves, anyone else blocks. The keeper also saves a shot passing within one square of it; anything further away goes past. A clear path ending in G–J is a goal; otherwise it is wide and the keeper restarts.</li>
         <li>Blocked shots rebound one square back (straight shots) or two squares diagonally back (diagonal shots). A loose rebound stays on its square until a piece moves onto it.</li>
+      </ul>
+      <h3>Ball out of play (Laws 9, 15–17)</h3>
+      <ul>
+        <li>A ball carrier may clear the ball off the pitch along a straight or diagonal line (the Clear button). Wide shots and rebounds can also go out.</li>
+        <li><b>Throw-in</b> (over a touchline): to the other team, from where it went out. The taker must pass, up to 4 squares. Opponents keep a 1-square gap.</li>
+        <li><b>Corner kick</b> (a team puts it over its own goal line): to the other team, from the corner square. Opponents keep a 2-square gap.</li>
+        <li><b>Goal kick</b> (over the opponent's goal line, including a wide shot): the keeper passes from its six-yard box. Opponents leave the 18-yard box.</li>
+        <li>No offside from any restart, no tackles while the ball is out of play, and a restart not taken gives the ball to the other team. Restarts can be switched off in match setup.</li>
       </ul>
       <h3>9 · Kickoff and clock</h3>
       <p>The kickoff Frontliner must pass first, and the clock starts with that pass. Two 10-minute halves (5 or 15 against the CPU). Online, each turn has a 25-second timer: run out and you forfeit the turn. Formations can change at half-time; the other team kicks off the second half.</p>

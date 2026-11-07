@@ -96,6 +96,7 @@ export function registerAccountRoutes(app: Express, ledger: Ledger, now: () => n
       halfMinutes: HALF_MINUTE_OPTIONS.includes(b.halfMinutes) ? b.halfMinutes : 10,
       turnTimer: false,
       stallLimit: stallLimitFor(difficulty),
+      restarts: b.restarts !== false,
     };
     const id = randomUUID();
     pending.set(id, { accountId: a.id, setup, difficulty, startedAt: now() });

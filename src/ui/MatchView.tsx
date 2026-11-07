@@ -10,6 +10,9 @@ import {
   carrierOf,
   cellName,
   clockText,
+  RESTART_LAW,
+  RESTART_NAMES,
+  THROW_IN_RANGE,
   getPiece,
   mustPlayBall,
   offsideLine,
@@ -45,6 +48,9 @@ export function useLocalMatch(initial: GameState, controllers: Record<Side, Cont
   const [paused, setPaused] = useState(false);
   const ref = useRef(state);
   ref.current = state;
+  // Who controls each side right now (a lesson hands the opponent back to "human" once it ends).
+  const controllersRef = useRef(controllers);
+  controllersRef.current = controllers;
 
   // Every action, clock ticks included, so the server can replay and verify the match.
   const logRef = useRef<Action[]>([]);
@@ -97,7 +103,7 @@ export function useLocalMatch(initial: GameState, controllers: Record<Side, Cont
         const step = () => {
           if (cancelled) return;
           const s = ref.current;
-          if (i >= plan.length || s.phase !== 'playing' || s.turnNumber !== turn) return setCpuThinking(false);
+          if (i >= plan.length || s.phase !== 'playing' || s.turnNumber !== turn || controllersRef.current[s.turn] === 'human') return setCpuThinking(false);
           try {
             dispatch(plan[i++]);
           } catch {
@@ -154,17 +160,20 @@ export function MatchView({ state, onAction, humanSides, busy, theme, kits, bann
   const [sel, setSel] = useState<string | null>(null);
   const [oneTwoMode, setOneTwoMode] = useState(false);
   const [via, setVia] = useState<string | null>(null);
+  const [clearMode, setClearMode] = useState(false);
   const [pending, setPending] = useState<Action | null>(null);
   const [hover, setHover] = useState<Cell | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const myTurn = humanSides.includes(state.turn) && state.phase === 'playing' && !busy;
   // During a follow-up or a kickoff only one piece may act: select it for the player.
-  const forced = state.followUp?.pieceId ?? (state.kickoffPending ? state.ball.carrier : null);
+  const rs = state.restart;
+  const forced = state.followUp?.pieceId ?? (state.kickoffPending ? state.ball.carrier : rs && rs.side === state.turn ? rs.takerId : null);
   useEffect(() => {
     setPending(null);
     setOneTwoMode(false);
     setVia(null);
+    setClearMode(false);
     if (!myTurn) setSel(null);
     else if (forced) setSel(forced);
     else setSel((cur) => (cur && getPiece(state, cur)?.side === state.turn ? cur : null));
@@ -178,6 +187,10 @@ export function MatchView({ state, onAction, humanSides, busy, theme, kits, bann
   const overlays: Overlay[] = useMemo(() => {
     if (!opts || !selPiece) return [];
     const out: Overlay[] = [];
+    if (clearMode) {
+      for (const c of opts.clears) out.push({ cell: c, kind: 'out' });
+      return out;
+    }
     if (oneTwoMode) {
       // Q6a: pick the partner, then where to run (any square in line with the partner).
       const partner = via ? getPiece(state, via) : undefined;
@@ -198,13 +211,14 @@ export function MatchView({ state, onAction, humanSides, busy, theme, kits, bann
       out.push({ cell: q.pos, kind: r === 'complete' ? 'pass' : r === 'offside' ? 'passOffside' : 'passLost' });
     }
     return out;
-  }, [opts, selPiece, oneTwoMode, via, state]);
+  }, [opts, selPiece, oneTwoMode, via, clearMode, state]);
 
-  const pendingCell = pending && (pending.type === 'move' || pending.type === 'pass' || pending.type === 'oneTwo') ? pending.to : null;
+  const pendingCell = pending && (pending.type === 'move' || pending.type === 'pass' || pending.type === 'oneTwo' || pending.type === 'clear') ? pending.to : null;
   const allOverlays = pendingCell ? [...overlays, { cell: pendingCell, kind: 'pending' as const }] : overlays;
 
   const buildAction = (cell: Cell): Action | null => {
     if (!selPiece || !opts) return null;
+    if (clearMode) return opts.clears.some((c) => sameCell(c, cell)) ? { type: 'clear', pieceId: selPiece.id, to: cell } : null;
     if (oneTwoMode) {
       const partner = via ? getPiece(state, via) : undefined;
       if (!partner) return null;
@@ -225,6 +239,7 @@ export function MatchView({ state, onAction, humanSides, busy, theme, kits, bann
     setPending(null);
     setOneTwoMode(false);
     setVia(null);
+    setClearMode(false);
   };
 
   const onCell = (cell: Cell) => {
@@ -336,6 +351,20 @@ export function MatchView({ state, onAction, humanSides, busy, theme, kits, bann
 
           {myTurn && !selPiece && <p className="hint">Select one of your pieces. A turn is one piece: move it, then pass or shoot with it if the rules allow.</p>}
           {myTurn && state.kickoffPending && <p className="hint">Kickoff: your Frontliner must pass first. Tap a teammate in a straight or diagonal line.</p>}
+          {rs && state.phase === 'playing' && (
+            <div className="callout">
+              <div className="eyebrow">{RESTART_LAW[rs.type]}</div>
+              <strong>{RESTART_NAMES[rs.type]} to {TEAM_NAMES[rs.side]}</strong>
+              <p>
+                {rs.type === 'throwIn'
+                  ? `The taker must pass, up to ${THROW_IN_RANGE} squares. No shot and no offside. Opponents keep a 1-square gap.`
+                  : rs.type === 'corner'
+                    ? 'The taker must pass. No offside. Opponents keep a 2-square gap (about 10 yards).'
+                    : 'The keeper must pass. No offside. Opponents stay outside the 18-yard box until it is taken.'}
+              </p>
+              {rs.side !== state.turn && <p className="hint">{TEAM_NAMES[state.turn]} can reposition first; no tackles while the ball is out of play.</p>}
+            </div>
+          )}
           {myTurn && mustPlayBall(state) && (
             <p className="error">Possession limit: the ball has stayed still for {state.stallLimit} turns. Move it this turn (dribble, pass or shoot), or it goes to the opponent.</p>
           )}
@@ -355,16 +384,20 @@ export function MatchView({ state, onAction, humanSides, busy, theme, kits, bann
               </div>
               <p className="hint">{ROLE_SUMMARY[selPiece.role]}</p>
               <div className="modes" role="group" aria-label="Actions">
-                <button type="button" className={!oneTwoMode ? 'active' : ''} onClick={() => { setOneTwoMode(false); setPending(null); }}>
+                <button type="button" className={!oneTwoMode && !clearMode ? 'active' : ''} onClick={() => { setOneTwoMode(false); setClearMode(false); setPending(null); }}>
                   Move / pass
                 </button>
                 <button type="button" disabled={!opts.shoot} onClick={() => { setOneTwoMode(false); setPending({ type: 'shoot', pieceId: selPiece.id }); }}>
                   Shoot
                 </button>
-                <button type="button" className={oneTwoMode ? 'active' : ''} disabled={opts.oneTwos.length === 0} onClick={() => { setOneTwoMode(true); setVia(null); setPending(null); }}>
+                <button type="button" className={oneTwoMode ? 'active' : ''} disabled={opts.oneTwos.length === 0} onClick={() => { setOneTwoMode(true); setClearMode(false); setVia(null); setPending(null); }}>
                   One-two
                 </button>
+                <button type="button" className={clearMode ? 'active' : ''} disabled={opts.clears.length === 0} onClick={() => { setClearMode(true); setOneTwoMode(false); setPending(null); }}>
+                  Clear
+                </button>
               </div>
+              {clearMode && <p className="hint">Tap an orange arrow beyond the edge to kick the ball out of play. Over the touchline: throw-in to the other team. Over your own goal line: corner to them. Over theirs: their goal kick.</p>}
               {oneTwoMode && <p className="hint">{via ? 'Now tap a gold diamond: where the passer runs to get the ball back.' : 'Tap the partner (dashed ring) to play the one-two with.'}</p>}
               <ul className="legend">
                 <li><i className="lg-move" /> move</li>

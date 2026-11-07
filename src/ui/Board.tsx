@@ -27,7 +27,7 @@ export const OY = LABEL + GOAL;
 export const BOARD_W = COLS * CELL + LABEL * 2;
 export const BOARD_H = ROWS * CELL + (LABEL + GOAL) * 2;
 
-export type OverlayKind = 'move' | 'moveDanger' | 'moveTackle' | 'pass' | 'passLost' | 'passOffside' | 'oneTwo' | 'run' | 'pending';
+export type OverlayKind = 'move' | 'moveDanger' | 'moveTackle' | 'pass' | 'passLost' | 'passOffside' | 'oneTwo' | 'run' | 'out' | 'pending';
 export interface Overlay {
   cell: Cell;
   kind: OverlayKind;
@@ -191,6 +191,7 @@ const OVERLAY_COLOR: Record<OverlayKind, string> = {
   passOffside: '#ffd400',
   oneTwo: '#e8c15c',
   run: '#e8c15c',
+  out: '#ff9a3c',
   pending: 'var(--gold)',
 };
 
@@ -199,6 +200,8 @@ function OverlayMark({ o }: { o: Overlay }) {
   const y = cy(o.cell.r);
   const color = OVERLAY_COLOR[o.kind];
   switch (o.kind) {
+    case 'out':
+      return <path d={`M${x - 6},${y - 6} L${x + 6},${y} L${x - 6},${y + 6} Z`} transform={`rotate(${o.cell.c < 0 ? 180 : o.cell.c >= COLS ? 0 : o.cell.r < 0 ? -90 : 90} ${x} ${y})`} fill={color} stroke="#3a1a00" strokeWidth={1} />;
     case 'run':
       return <rect x={x - 6} y={y - 6} width={12} height={12} transform={`rotate(45 ${x} ${y})`} fill={color} stroke="rgba(0,0,0,.4)" strokeWidth={1} />;
     case 'move':
@@ -221,9 +224,11 @@ export function Board({ state, theme, kits, selected, overlays = [], onCell, onH
     const m = svg.getScreenCTM();
     if (!m) return null;
     const p = pt.matrixTransform(m.inverse());
-    const c = Math.floor((p.x - OX) / CELL);
-    const r = Math.floor((p.y - OY) / CELL);
-    if (c < 0 || c >= COLS || r < 0 || r >= ROWS) return null;
+    // Squares just beyond the pitch edge are clickable too (for aiming a clearance).
+    const c = p.x < OX ? (p.x >= 0 ? -1 : -9) : Math.floor((p.x - OX) / CELL);
+    const r = p.y < OY ? (p.y >= OY - GOAL ? -1 : -9) : Math.floor((p.y - OY) / CELL);
+    if (c < -1 || c > COLS || r < -1 || r > ROWS) return null;
+    if ((c < 0 || c >= COLS) && (r < 0 || r >= ROWS)) return null;
     return { c, r };
   };
   const loose = state.ball.carrier === null;
