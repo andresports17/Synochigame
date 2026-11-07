@@ -42,7 +42,7 @@ interface OnlineMatch {
   updatedAt: number;
 }
 
-const ONLINE_RULES = { halfMinutes: 10, turnTimer: true, stallLimit: 3 } as const;
+const ONLINE_RULES = { halfMinutes: 10, turnTimer: true, stallLimit: 3, restarts: true } as const;
 
 const matches = new Map<string, OnlineMatch>();
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -166,6 +166,7 @@ export function createApp(opts: { ledger?: Ledger; now?: () => number } = {}) {
           halfMinutes: [5, 10, 15].includes(setup.halfMinutes) ? setup.halfMinutes : ONLINE_RULES.halfMinutes,
           turnTimer: typeof setup.turnTimer === 'boolean' ? setup.turnTimer : ONLINE_RULES.turnTimer,
           stallLimit: setup.stallLimit === 2 || setup.stallLimit === 3 || setup.stallLimit === null ? setup.stallLimit : ONLINE_RULES.stallLimit,
+          restarts: setup.restarts !== false,
         },
         actions,
       );

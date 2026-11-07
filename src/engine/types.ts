@@ -40,6 +40,8 @@ export type Action =
   | { type: 'shoot'; pieceId: string }
   /** Give-and-go: pass to `viaId`, run to `to` (chosen by the player), get the ball back (rule 5.4, Q6). */
   | { type: 'oneTwo'; pieceId: string; viaId: string; to: Cell }
+  /** Kick the ball off the pitch along a straight or diagonal line (stage 1 restarts). `to` is the square just beyond the edge. */
+  | { type: 'clear'; pieceId: string; to: Cell }
   /** End the turn: decline an optional follow-up, or forfeit. */
   | { type: 'endTurn' }
   /** Advance the match and turn clocks by `ms` (real-time play and replays). */
@@ -69,7 +71,19 @@ export type EventKind =
   | 'timeout'
   | 'halftime'
   | 'fulltime'
-  | 'stall';
+  | 'stall'
+  | 'out'
+  | 'restart';
+
+export type RestartType = 'throwIn' | 'goalKick' | 'corner';
+
+/** A dead-ball restart waiting to be taken by `takerId` (Laws 15–17). */
+export interface Restart {
+  type: RestartType;
+  side: Side;
+  takerId: string;
+  spot: Cell;
+}
 
 export interface GameEvent {
   kind: EventKind;
@@ -122,6 +136,10 @@ export interface GameState {
   stallLimit: number | null;
   /** Consecutive turns `side` has kept the ball without moving it. */
   stall: { side: Side; turns: number };
+  /** Whether the ball can go out of play, with throw-ins, goal kicks and corners (stage 1). */
+  restartsEnabled: boolean;
+  /** A restart waiting to be taken, if any. */
+  restart: Restart | null;
   /** Ball position when the current turn began (to detect a turn in which the ball did not move). */
   turnStart: { carrier: string | null; pos: Cell };
   turnNumber: number;
@@ -142,4 +160,6 @@ export interface MatchSetup {
   turnTimer?: boolean;
   /** Possession limit in turns (Q20: 2 for ranked and the hardest CPU, 3 otherwise). */
   stallLimit?: number | null;
+  /** Ball out of play, throw-ins, goal kicks and corners (stage 1). Default on. */
+  restarts?: boolean;
 }

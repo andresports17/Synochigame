@@ -14,6 +14,7 @@
 import {
   COLS,
   DIRECTIONS,
+  GOAL_COLS,
   HALF_MS,
   INNER_GOAL_COLS,
   KICKOFF_SPOT,
@@ -27,6 +28,7 @@ import {
   forwardDir,
   inAnyKeeperBox,
   inCentreCircle,
+  inKeeperBox,
   inOwnHalf,
   inPenaltyArea,
   isFlank,
@@ -37,7 +39,7 @@ import {
 } from './board';
 import { FORMATION_NAMES, formationPieces, layoutPieces } from './formations';
 import { ONE_TWO_PARTNERS, ROLE_NAMES, maxRange } from './roles';
-import type { Action, Cell, EventKind, GameEvent, GameState, MatchSetup, Piece, Role, Side, Stats } from './types';
+import type { Action, Cell, EventKind, GameEvent, GameState, MatchSetup, Piece, Restart, RestartType, Role, Side, Stats } from './types';
 
 export class IllegalActionError extends Error {}
 
@@ -88,6 +90,7 @@ export function cloneState(s: GameState): GameState {
     layouts: { ...s.layouts },
     clock: { ...s.clock },
     stall: { ...s.stall },
+    restart: s.restart ? { ...s.restart, spot: { ...s.restart.spot } } : null,
     turnStart: { carrier: s.turnStart.carrier, pos: { ...s.turnStart.pos } },
     stats: { home: { ...s.stats.home }, away: { ...s.stats.away } },
     events: s.events.slice(),
@@ -145,6 +148,8 @@ export function createMatch(setup: MatchSetup): GameState {
     turnTimer: setup.turnTimer ?? false,
     clock: { halfMs: halfLength, turnMs: TURN_MS },
     stallLimit: setup.stallLimit ?? null,
+    restartsEnabled: setup.restarts ?? true,
+    restart: null,
     stall: { side: first, turns: 0 },
     turnStart: { carrier: null, pos: { ...KICKOFF_SPOT[first] } },
     turnNumber: 1,
@@ -185,6 +190,7 @@ function kickoff(s: GameState, side: Side) {
     if (p.side !== side && inCentreCircle(p.pos))
       p.pos = nearestSquare(s, p.pos, (c) => inOwnHalf(p.side, c) && !inCentreCircle(c) && !inAnyKeeperBox(c));
   giveBall(s, kicker);
+  s.restart = null;
   s.turn = side;
   s.followUp = null;
   s.kickoffPending = true;
@@ -212,7 +218,7 @@ function nextTurn(s: GameState, side: Side) {
 
 /** Q20: true when the team to play has kept the ball still for the limit and must move it this turn. */
 export function mustPlayBall(s: GameState): boolean {
-  if (s.stallLimit === null || s.kickoffPending || s.phase !== 'playing') return false;
+  if (s.stallLimit === null || s.kickoffPending || s.restart || s.phase !== 'playing') return false;
   const c = carrierOf(s);
   return !!c && c.side === s.turn && s.stall.side === s.turn && s.stall.turns >= s.stallLimit;
 }
@@ -297,23 +303,8 @@ export function passOutcome(s: GameState, passer: Piece, to: Cell, checkOffside 
 
   const ray: Cell[] = [];
   for (let k = 1; k < n; k++) ray.push({ c: passer.pos.c + dc * k, r: passer.pos.r + dr * k });
-
-  // 5.2: an opponent on the first square in the pass direction takes the ball.
-  const first = ray[0] ? pieceAt(s, ray[0]) : undefined;
-  if (first && first.side !== passer.side) return { result: 'blocked', by: first };
-
-  // 5.2: opponents closer than 3 squares on the ray intercept, unless a teammate further down
-  // the ray (at least 2 from the carrier) shields it. Opponents 3 or more away are ignored.
-  // INTERPRETATION (Q3, unanswered): the receiver itself does not count as the shielding teammate.
-  for (let k = 1; k < ray.length && k + 1 < 3; k++) {
-    const q = pieceAt(s, ray[k]);
-    if (!q || q.side === passer.side) continue;
-    const shield = ray.slice(k + 1).some((c) => {
-      const t = pieceAt(s, c);
-      return !!t && t.side === passer.side && dist(passer.pos, c) >= 2;
-    });
-    if (!shield) return { result: 'intercepted', by: q };
-  }
+  const lane = laneThief(s, passer, ray);
+  if (lane) return lane;
 
   // 5.3 pressure tackle: a defender adjacent to the receiver, straight on along the pass direction.
   const ahead = pieceAt(s, { c: to.c + dc, r: to.r + dr });
@@ -334,6 +325,126 @@ export function passOutcome(s: GameState, passer: Piece, to: Cell, checkOffside 
     if (!escape) return { result: 'contested', by: markers[0] };
   }
   return { result: 'complete' };
+}
+
+/**
+ * Rule 5.2 lane checks along `ray` (the squares between the ball and its target):
+ * an opponent on the first square takes the ball; one 2 squares away intercepts
+ * unless a teammate further down the ray (at least 2 from the carrier) shields it;
+ * opponents 3 or more away are ignored.
+ * INTERPRETATION (Q3, unanswered): the receiver itself does not count as the shielding teammate.
+ */
+function laneThief(s: GameState, passer: Piece, ray: Cell[]): { result: 'blocked' | 'intercepted'; by: Piece } | null {
+  const first = ray[0] ? pieceAt(s, ray[0]) : undefined;
+  if (first && first.side !== passer.side) return { result: 'blocked', by: first };
+  for (let k = 1; k < ray.length && k + 1 < 3; k++) {
+    const q = pieceAt(s, ray[k]);
+    if (!q || q.side === passer.side) continue;
+    const shield = ray.slice(k + 1).some((c) => {
+      const t = pieceAt(s, c);
+      return !!t && t.side === passer.side && dist(passer.pos, c) >= 2;
+    });
+    if (!shield) return { result: 'intercepted', by: q };
+  }
+  return null;
+}
+
+// ------------------------------------------------------------------ ball out of play and restarts (stage 1: Laws 9, 15–17)
+
+export const RESTART_NAMES: Record<RestartType, string> = { throwIn: 'Throw-in', goalKick: 'Goal kick', corner: 'Corner kick' };
+export const RESTART_LAW: Record<RestartType, string> = { throwIn: 'Law 15 · Throw-in', goalKick: 'Law 16 · Goal kick', corner: 'Law 17 · Corner kick' };
+const OUT_LAW = 'Law 9 · Ball out of play';
+/** A throw-in travels at most this many squares. */
+export const THROW_IN_RANGE = 4;
+
+/** The ring of squares just beyond the pitch where the ball leaves play (not through the goal mouth F–K). */
+export function isOutCell(c: Cell): boolean {
+  const touchline = (c.c === -1 || c.c === COLS) && c.r >= 0 && c.r < ROWS;
+  const goalLine = (c.r === -1 || c.r === ROWS) && c.c >= 0 && c.c < COLS && (c.c < GOAL_COLS[0] || c.c > GOAL_COLS[1]);
+  return touchline || goalLine;
+}
+
+/** The first square beyond the pitch reached by going from `from` in direction (dc, dr). */
+function exitCell(from: Cell, dc: number, dr: number): Cell {
+  let c = { ...from };
+  while (onBoard(c)) c = { c: c.c + dc, r: c.r + dr };
+  return c;
+}
+
+/** Where the carrier may clear the ball out of play: one square beyond the edge on each straight or diagonal line. */
+export function clearTargets(s: GameState, p: Piece): Cell[] {
+  if (!s.restartsEnabled) return [];
+  return DIRECTIONS.map(([dc, dr]) => exitCell(p.pos, dc, dr)).filter(isOutCell);
+}
+
+/** Which restart the Laws give when the ball leaves the pitch at `out`, last touched by `lastTouch`. */
+export function restartForOut(lastTouch: Side, out: Cell): { type: RestartType; side: Side; spot: Cell } {
+  const other = opponent(lastTouch);
+  if (out.c < 0 || out.c >= COLS) return { type: 'throwIn', side: other, spot: { c: out.c < 0 ? 0 : COLS - 1, r: out.r } };
+  // Blue (home) attacks toward row 1, so the top goal line is Red's.
+  const lineOwner: Side = out.r < 0 ? 'away' : 'home';
+  const goalRow = out.r < 0 ? 0 : ROWS - 1;
+  if (lineOwner === lastTouch) return { type: 'corner', side: other, spot: { c: out.c < COLS / 2 ? 0 : COLS - 1, r: goalRow } };
+  return { type: 'goalKick', side: lineOwner, spot: { c: 0, r: goalRow } };
+}
+
+/**
+ * Squares the other team may not stand on while a restart waits: a 1-square gap round a
+ * throw-in, a 2-square gap (about 10 yards) round a corner, and outside the kicking team's
+ * 18-yard box for a goal kick.
+ */
+export function restartForbidden(rs: Restart, c: Cell): boolean {
+  if (rs.type === 'goalKick') return inPenaltyArea(rs.side, c);
+  return dist(c, rs.spot) <= (rs.type === 'throwIn' ? 1 : 2);
+}
+
+const legalStand = (p: Piece, c: Cell) => (p.role === 'GK' ? inPenaltyArea(p.side, c) : !inAnyKeeperBox(c));
+
+function awardRestart(s: GameState, type: RestartType, side: Side, at: Cell) {
+  const own = s.pieces.filter((q) => q.side === side);
+  let taker: Piece;
+  let spot = at;
+  if (type === 'goalKick') {
+    taker = own.find((q) => q.role === 'GK') ?? nearestOf(own, at);
+    if (taker.role === 'GK' && !inKeeperBox(side, taker.pos)) taker.pos = nearestSquare(s, taker.pos, (c) => inKeeperBox(side, c));
+    spot = { ...taker.pos };
+  } else {
+    const outfield = own.filter((q) => q.role !== 'GK');
+    taker = nearestOf(outfield.length ? outfield : own, at);
+    const occupant = pieceAt(s, spot);
+    if (occupant && occupant.id !== taker.id) occupant.pos = nearestSquare(s, spot, (c) => legalStand(occupant, c));
+    taker.pos = { ...spot };
+  }
+  giveBall(s, taker);
+  s.followUp = null;
+  const rs: Restart = { type, side, takerId: taker.id, spot: { ...spot } };
+  s.restart = rs;
+  log(s, 'restart', side, `${RESTART_NAMES[type]} to ${TEAM_NAMES[side]}, taken by the ${ROLE_NAMES[taker.role]} at ${cellName(spot)}`, RESTART_LAW[type]);
+  const moved: string[] = [];
+  for (const q of s.pieces)
+    if (q.side !== side && restartForbidden(rs, q.pos)) {
+      q.pos = nearestSquare(s, q.pos, (c) => !restartForbidden(rs, c) && legalStand(q, c));
+      moved.push(ROLE_NAMES[q.role]);
+    }
+  if (moved.length)
+    log(s, 'restart', opponent(side), `${TEAM_NAMES[opponent(side)]} ${moved.join(', ')} step back to keep their distance`, RESTART_LAW[type]);
+}
+
+/** The ball has gone out at `out`, last touched by `lastTouch`: log it and award the restart. */
+function ballOut(s: GameState, lastTouch: Side, out: Cell, how: string) {
+  log(s, 'out', lastTouch, how, OUT_LAW);
+  const r = restartForOut(lastTouch, out);
+  awardRestart(s, r.type, r.side, r.spot);
+}
+
+/** The team did not take its restart (ended the turn or ran out of time): the ball goes to the nearest opponent. */
+function restartHandover(s: GameState) {
+  const rs = s.restart!;
+  const c = getPiece(s, rs.takerId)!;
+  const taker = nearestOf(s.pieces.filter((q) => q.side !== c.side), c.pos);
+  s.restart = null;
+  giveBall(s, taker);
+  log(s, 'stall', c.side, `${RESTART_NAMES[rs.type]} not taken. Ball to ${label(taker)}`, RESTART_LAW[rs.type]);
 }
 
 /** Teammates the carrier may legally pass to (geometry only; the outcome may still be a turnover). */
@@ -480,6 +591,17 @@ export function validateAction(s: GameState, a: Action): string | null {
   const p = getPiece(s, a.pieceId);
   if (!p) return 'Unknown piece';
   if (p.side !== s.turn) return 'Not your turn';
+  const rs = s.restart;
+  if (rs && rs.side === s.turn) {
+    const name = RESTART_NAMES[rs.type];
+    if (p.id !== rs.takerId) return `Take the ${name.toLowerCase()} first: only the taker can play`;
+    if (a.type !== 'pass') return `A ${name.toLowerCase()} must be a pass to a teammate (no shot, no dribble)`;
+    if (rs.type === 'throwIn' && dist(p.pos, a.to) > THROW_IN_RANGE) return `A throw-in travels at most ${THROW_IN_RANGE} squares`;
+  }
+  if (rs && rs.side !== s.turn) {
+    if (a.type !== 'move') return `The ball is out of play until the ${RESTART_NAMES[rs.type].toLowerCase()} is taken`;
+    if (restartForbidden(rs, a.to)) return `Keep your distance from the ${RESTART_NAMES[rs.type].toLowerCase()}`;
+  }
   if (s.followUp && s.followUp.pieceId !== p.id) return 'Only the piece that moved can act again this turn';
   if (forced && s.ball.carrier !== p.id) return 'Possession limit: the ball carrier must play this turn';
 
@@ -502,6 +624,12 @@ export function validateAction(s: GameState, a: Action): string | null {
       if (!canShootFrom(p.side, p.pos)) return 'Not in a shooting position';
       if (s.followUp && !MOVE_AND_SHOOT_ROLES.has(p.role)) return 'Only Frontliners, Flankers and Sparkers can move and then shoot';
       return canShootNow(s, p) ? null : 'No shot is allowed after this move';
+    }
+    case 'clear': {
+      if (!s.restartsEnabled) return 'The ball cannot be played out of play in this mode';
+      if (s.kickoffPending) return 'At kickoff the first action must be a pass';
+      if (!canPassNow(s, p)) return s.ball.carrier !== p.id ? 'Only the ball carrier can clear the ball' : 'No clearance is allowed after this move';
+      return clearTargets(s, p).some((c) => sameCell(c, a.to)) ? null : 'Clear along a straight or diagonal line over the touchline or goal line';
     }
     case 'oneTwo': {
       if (s.kickoffPending) return 'At kickoff the first action must be a plain pass';
@@ -554,11 +682,11 @@ function stallHandover(s: GameState) {
 }
 
 /** Resolve a pass from the carrier; returns true if the passer's team kept the ball. */
-function doPass(s: GameState, passer: Piece, to: Cell, quiet = false): boolean {
+function doPass(s: GameState, passer: Piece, to: Cell, quiet = false, checkOffside = true): boolean {
   const st = s.stats[passer.side];
   const opp = opponent(passer.side);
   st.passes++;
-  const out = passOutcome(s, passer, to);
+  const out = passOutcome(s, passer, to, checkOffside);
   const receiver = pieceAt(s, to)!;
   switch (out.result) {
     case 'complete':
@@ -611,9 +739,9 @@ function afterMove(s: GameState, p: Piece) {
     nextTurn(s, opponent(p.side));
     return;
   }
-  // 7.2 active tackle: a defender moved next to a stationary carrier.
+  // 7.2 active tackle: a defender moved next to a stationary carrier (not while the ball is out of play).
   const carrier = carrierOf(s);
-  if (carrier && carrier.side !== p.side) {
+  if (carrier && carrier.side !== p.side && !s.restart) {
     const rule = activeTackleRule(s, p, carrier);
     if (rule) {
       s.stats[p.side].tackles++;
@@ -639,7 +767,9 @@ export function resolveAction(prev: GameState, a: Action): GameState {
         s.clock.halfMs = 0;
         endHalf(s);
       } else if (s.turnTimer && s.clock.turnMs <= 0) {
-        if (mustPlayBall(s)) {
+        if (s.restart && s.restart.side === s.turn) {
+          restartHandover(s);
+        } else if (mustPlayBall(s)) {
           stallHandover(s);
         } else {
           log(s, 'timeout', s.turn, `Time! ${TEAM_NAMES[s.turn]} ran out of their 25 seconds and forfeit the turn`, RULE.clock);
@@ -667,6 +797,11 @@ export function resolveAction(prev: GameState, a: Action): GameState {
       return s;
     }
     case 'endTurn': {
+      if (s.restart && s.restart.side === s.turn) {
+        restartHandover(s);
+        nextTurn(s, opponent(s.turn));
+        return s;
+      }
       // INTERPRETATION (Q20): ending the turn without moving the ball once the limit is reached
       // gives the ball to the nearest opponent, the same as running out of time.
       if (mustPlayBall(s)) {
@@ -701,7 +836,26 @@ export function resolveAction(prev: GameState, a: Action): GameState {
     case 'pass': {
       s.kickoffPending = false;
       // Rule 4.2: a completed pass hands play to the other team; so does losing the ball.
-      doPass(s, p, a.to);
+      // No offside from a throw-in, goal kick or corner (Law 11).
+      const fromRestart = s.restart;
+      s.restart = null;
+      doPass(s, p, a.to, false, !fromRestart);
+      nextTurn(s, opponent(p.side));
+      return s;
+    }
+    case 'clear': {
+      const [dc, dr] = [Math.sign(a.to.c - p.pos.c), Math.sign(a.to.r - p.pos.r)];
+      const ray: Cell[] = [];
+      for (let c = { c: p.pos.c + dc, r: p.pos.r + dr }; onBoard(c); c = { c: c.c + dc, r: c.r + dr }) ray.push(c);
+      const thief = laneThief(s, p, ray);
+      if (thief) {
+        s.stats[thief.by.side].interceptions++;
+        giveBall(s, thief.by);
+        log(s, 'intercept', thief.by.side, `${label(thief.by)} blocks the clearance at ${cellName(thief.by.pos)}`, RULE.pass);
+      } else {
+        const over = a.to.c < 0 || a.to.c >= COLS ? 'touchline' : 'goal line';
+        ballOut(s, p.side, a.to, `${label(p)} clears the ball over the ${over}`);
+      }
       nextTurn(s, opponent(p.side));
       return s;
     }
@@ -761,9 +915,14 @@ export function resolveAction(prev: GameState, a: Action): GameState {
         giveBall(s, res.by!);
         log(s, 'save', opp, `Saved! ${label(res.by!)} stops the ${ROLE_NAMES[p.role]}'s shot`, RULE.shot);
       } else if (res.outcome === 'wide') {
-        const keeper = s.pieces.find((q) => q.side === opp && q.role === 'GK') ?? s.pieces.find((q) => q.side === opp)!;
-        giveBall(s, keeper);
-        log(s, 'goalKick', opp, `Wide! The shot misses the target. Goal kick: ${label(keeper)} has the ball`, RULE.shot);
+        if (s.restartsEnabled) {
+          log(s, 'goalKick', opp, `Wide! The ${ROLE_NAMES[p.role]}'s shot misses the target`, RULE.shot);
+          awardRestart(s, 'goalKick', opp, res.path[res.path.length - 1] ?? p.pos);
+        } else {
+          const keeper = s.pieces.find((q) => q.side === opp && q.role === 'GK') ?? s.pieces.find((q) => q.side === opp)!;
+          giveBall(s, keeper);
+          log(s, 'goalKick', opp, `Wide! The shot misses the target. Goal kick: ${label(keeper)} has the ball`, RULE.shot);
+        }
       } else {
         const b = res.by!;
         if (b.side === opp) s.stats[opp].blocks++;
@@ -771,8 +930,12 @@ export function resolveAction(prev: GameState, a: Action): GameState {
         // 8.4 rebound: straight shots come back one square, diagonal shots two squares diagonally back.
         const [dc, dr] = res.dir;
         const reb = dc === 0 ? { c: b.pos.c, r: b.pos.r - dr } : { c: b.pos.c + 2 * dc, r: b.pos.r - 2 * dr };
-        if (!onBoard(reb)) giveBall(s, b);
-        else {
+        if (!onBoard(reb)) {
+          // Off the pitch: with restarts on, the Laws decide the restart from where it left play.
+          const out = exitCell(b.pos, dc === 0 ? 0 : Math.sign(dc), -Math.sign(dr));
+          if (s.restartsEnabled && isOutCell(out)) ballOut(s, b.side, out, `The rebound off ${label(b)} goes out of play`);
+          else giveBall(s, b);
+        } else {
           const there = pieceAt(s, reb);
           if (there) {
             giveBall(s, there);
@@ -812,14 +975,22 @@ export function replay(setup: MatchSetup, actions: Action[]): GameState {
 
 /** Every action the given piece may take right now (used by the UI and the CPU). */
 export function actionsFor(s: GameState, p: Piece) {
-  const none = { moves: [] as Cell[], passes: [] as Piece[], shoot: false, oneTwos: [] as Piece[] };
+  const none = { moves: [] as Cell[], passes: [] as Piece[], shoot: false, oneTwos: [] as Piece[], clears: [] as Cell[] };
   if (s.phase !== 'playing' || p.side !== s.turn || (s.followUp && s.followUp.pieceId !== p.id)) return none;
   if (mustPlayBall(s) && s.ball.carrier !== p.id) return none;
+  const rs = s.restart;
+  if (rs && rs.side === p.side) {
+    // Only the taker plays, and only a pass.
+    if (p.id !== rs.takerId) return none;
+    return { ...none, passes: passTargets(s, p).filter((q) => rs.type !== 'throwIn' || dist(p.pos, q.pos) <= THROW_IN_RANGE) };
+  }
+  if (rs) return { ...none, moves: legalMoves(s, p).filter((c) => !restartForbidden(rs, c)) };
   const moves = s.kickoffPending || s.followUp ? [] : legalMoves(s, p);
   const passes = canPassNow(s, p) ? passTargets(s, p) : [];
   const shoot = !validateAction(s, { type: 'shoot', pieceId: p.id });
   const oneTwos = canPassNow(s, p) && !s.kickoffPending ? oneTwoPartners(s, p) : [];
-  return { moves, passes, shoot, oneTwos };
+  const clears = canPassNow(s, p) && !s.kickoffPending ? clearTargets(s, p) : [];
+  return { moves, passes, shoot, oneTwos, clears };
 }
 
 export { COLS, ROWS };
