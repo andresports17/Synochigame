@@ -32,6 +32,7 @@ import {
   ROWS,
 } from '../engine';
 import { Board, type Overlay } from './Board';
+import { commentate, loadFx, saveFx, say, soundFor, stadium, type FxSettings, type Line } from './fx';
 import type { BoardTheme, Kit } from './themes';
 
 export type Controller = 'human' | 'pass' | Difficulty;
@@ -301,8 +302,74 @@ export function MatchView({ state, onAction, humanSides, busy, theme, kits, bann
   const warn = state.clock.turnMs <= TURN_WARNING_MS;
   const recent = state.events.slice(-8).reverse();
 
+  // ---- Match-day atmosphere: sound, commentary, goal celebration and replay.
+  const [fx, setFx] = useState<FxSettings>(loadFx);
+  const fxRef = useRef(fx);
+  fxRef.current = fx;
+  useEffect(() => {
+    stadium.setEnabled(fx.sound);
+    saveFx(fx);
+    if (!fx.voice) {
+      try {
+        window.speechSynthesis?.cancel();
+      } catch {
+        /* no speech engine */
+      }
+    }
+  }, [fx]);
+  const [line, setLine] = useState<Line | null>(null);
+  // frames: board positions to show; i = -1 is the GOAL! splash, then the replay frames in order.
+  const [celebrate, setCelebrate] = useState<{ side: Side; frames: Array<Pick<GameState, 'pieces' | 'ball'>>; i: number } | null>(null);
+  const seen = useRef(state.events.length);
+  const prevState = useRef(state);
+  const history = useRef<GameState[]>([]);
+  useEffect(() => {
+    const prev = prevState.current;
+    prevState.current = state;
+    if (state.events.length < seen.current) {
+      seen.current = 0; // a new match was loaded
+      history.current = [];
+    }
+    if (state.events.length === seen.current) return;
+    const fresh = state.events.slice(seen.current);
+    seen.current = state.events.length;
+    history.current = [...history.current, prev].slice(-4);
+    let best: Line | null = null;
+    for (const e of fresh) {
+      if (fxRef.current.sound) soundFor(e);
+      const l = commentate(e, state);
+      if (l && (!best || l.big || !best.big)) best = l;
+    }
+    if (best) {
+      setLine(best);
+      if (fxRef.current.voice && best.big) say(best.text);
+    }
+    const goal = fresh.find((e) => e.kind === 'goal');
+    const shooter = carrierOf(prev);
+    if (goal && shooter) {
+      const path = shotOutcome(prev, shooter).path;
+      const end = path[path.length - 1] ?? prev.ball.pos;
+      const net = { pieces: prev.pieces, ball: { pos: end, carrier: null } };
+      setCelebrate({ side: goal.side, frames: [...history.current, net], i: -1 });
+    }
+  }, [state]);
+  useEffect(() => {
+    if (!celebrate) return;
+    const t = window.setTimeout(
+      () => setCelebrate((c) => (!c ? c : c.i + 1 >= c.frames.length ? null : { ...c, i: c.i + 1 })),
+      celebrate.i < 0 ? 1900 : 850,
+    );
+    return () => window.clearTimeout(t);
+  }, [celebrate]);
+  // The crowd gets louder as the ball nears either goal.
+  useEffect(() => {
+    const r = state.ball.pos.r;
+    stadium.tension(1 - Math.min(r, ROWS - 1 - r) / ((ROWS - 1) / 2));
+  }, [state.ball.pos.r]);
+  const boardState = celebrate ? celebrate.frames[celebrate.i < 0 ? celebrate.frames.length - 1 : celebrate.i] : state;
+
   return (
-    <div className="match">
+    <div className="match" onPointerDown={() => stadium.unlock()}>
       <div className="scorebar">
         <div className="team home" style={{ '--kit': kits.home.fill } as React.CSSProperties}>
           <span className="swatch" />
@@ -326,15 +393,49 @@ export function MatchView({ state, onAction, humanSides, busy, theme, kits, bann
         </div>
       </div>
 
+      <div className="broadcast">
+        <p className={`commentary ${line?.big ? 'big' : ''}`} aria-live="polite">
+          {line?.text ?? 'Welcome to SYNOCHÍ. The teams are out and the crowd is ready.'}
+        </p>
+        <div className="fx-toggles">
+          <button type="button" aria-pressed={fx.sound} onClick={() => { stadium.unlock(); setFx({ ...fx, sound: !fx.sound }); }}>
+            {fx.sound ? 'Sound on' : 'Sound off'}
+          </button>
+          <button type="button" aria-pressed={fx.voice} onClick={() => { stadium.unlock(); setFx({ ...fx, voice: !fx.voice }); }}>
+            {fx.voice ? 'Voice on' : 'Voice off'}
+          </button>
+        </div>
+      </div>
+
       <div className="match-body">
         <div className="board-wrap">
+          {celebrate && (
+            <button
+              type="button"
+              className={`goal-splash ${celebrate.i < 0 ? 'big' : 'replay'}`}
+              style={{ '--kit': kits[celebrate.side].fill } as React.CSSProperties}
+              onClick={() => setCelebrate(null)}
+              aria-label="Skip the replay"
+            >
+              {celebrate.i < 0 ? (
+                <>
+                  <strong>GOAL!</strong>
+                  <span>
+                    {TEAM_NAMES.home} {state.score.home} – {state.score.away} {TEAM_NAMES.away}
+                  </span>
+                </>
+              ) : (
+                <span className="replay-tag">Replay · tap to skip</span>
+              )}
+            </button>
+          )}
           <Board
-            state={state}
+            state={boardState}
             theme={theme}
             kits={kits}
             selected={sel}
-            overlays={allOverlays}
-            onCell={onCell}
+            overlays={celebrate ? [] : allOverlays}
+            onCell={celebrate ? undefined : onCell}
             onHover={setHover}
             offside={lineValue !== null && selPiece ? { side: selPiece.side, line: lineValue } : null}
             flagged={flagged}

@@ -245,10 +245,12 @@ button, input, select { font: inherit; color: inherit; }
 .board-wrap { display: flex; justify-content: center; min-width: 0; }
 .board { width: 100%; height: auto; max-height: calc(100vh - 200px); min-height: 420px; display: block; user-select: none; cursor: pointer; }
 .board .piece { transition: transform 0.35s ease; }
+.board .ball { transition: transform 0.5s cubic-bezier(0.2, 0.7, 0.25, 1); pointer-events: none; }
 .board .pulse { animation: pulse 1.2s ease-in-out infinite; }
 @keyframes pulse { 50% { stroke-opacity: 0.35; } }
 @media (prefers-reduced-motion: reduce) {
-  .board .piece { transition: none; }
+  .board .piece, .board .ball { transition: none; }
+  .goal-splash.big strong { animation: none; }
   .board .pulse { animation: none; }
   .tile, .btn { transition: none; }
 }
@@ -351,3 +353,25 @@ button, input, select { font: inherit; color: inherit; }
 .role-list div { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
 .role-list dt { font-weight: 700; }
 .role-list dd { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
+
+/* Broadcast strip: live commentary and sound controls. */
+.broadcast { display: flex; align-items: center; gap: 12px; background: #0b1424; color: #f2f5fb; border-radius: 10px; padding: 8px 10px 8px 14px; border-left: 4px solid var(--gold); }
+.commentary { margin: 0; flex: 1; font: 500 15px/1.35 var(--font-body); min-height: 2.7em; display: flex; align-items: center; }
+.commentary.big { font-weight: 700; color: #fff; }
+.fx-toggles { display: flex; gap: 6px; flex: none; }
+.fx-toggles button { font: 600 12px/1 var(--font-body); color: #c9d3e6; background: transparent; border: 1px solid #33415c; border-radius: 999px; padding: 0 12px; min-height: 36px; cursor: pointer; }
+.fx-toggles button[aria-pressed='true'] { color: #0b1424; background: var(--gold); border-color: var(--gold); }
+@media (max-width: 480px) {
+  .broadcast { flex-wrap: wrap; }
+  .commentary { font-size: 14px; flex-basis: 100%; }
+}
+
+/* Goal celebration and instant replay over the board. */
+.board-wrap { position: relative; }
+.goal-splash { position: absolute; inset: 0; z-index: 5; border: 0; background: transparent; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: #fff; }
+.goal-splash.big { background: radial-gradient(circle at 50% 45%, color-mix(in srgb, var(--kit) 70%, transparent), rgba(5, 10, 20, 0.55) 70%); }
+.goal-splash.big strong { font: 900 clamp(56px, 14vw, 120px)/0.9 var(--font-display); letter-spacing: 0.02em; text-shadow: 0 6px 24px rgba(0, 0, 0, 0.5); animation: goal-pop 0.6s cubic-bezier(0.2, 1.4, 0.4, 1) both; }
+.goal-splash.big span { font: 800 20px/1 var(--font-display); text-transform: uppercase; text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6); }
+.goal-splash.replay { justify-content: flex-start; align-items: center; padding: 10px; }
+.replay-tag { font: 700 12px/1 var(--font-body); background: #d01f2f; color: #fff; border-radius: 4px; padding: 6px 8px; letter-spacing: 0.04em; }
+@keyframes goal-pop { from { transform: scale(0.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }

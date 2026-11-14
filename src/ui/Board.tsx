@@ -171,7 +171,7 @@ function PieceToken({ p, kit, selected, hasBall, compact, flagged }: { p: Piece;
           {p.role}
         </text>
       )}
-      {hasBall && <BallIcon x={9} y={9} />}
+      {hasBall && <circle r={14} fill="none" stroke="rgba(255,255,255,.75)" strokeWidth={1.3} />}
       {flagged && (
         <g transform="translate(-13,-16)">
           <line x1={0} y1={0} x2={0} y2={12} stroke="#fff" strokeWidth={1.5} />
@@ -276,11 +276,10 @@ export function Board({ state, theme, kits, selected, overlays = [], onCell, onH
       {state.pieces.map((p) => (
         <PieceToken key={p.id} p={p} kit={kits[p.side]} selected={p.id === selected} hasBall={state.ball.carrier === p.id} compact={compact} flagged={flagged.includes(p.id)} />
       ))}
-      {loose && (
-        <g className="piece" style={{ transform: `translate(${cx(state.ball.pos.c)}px, ${cy(state.ball.pos.r)}px)` }}>
-          <BallIcon x={0} y={0} />
-        </g>
-      )}
+      {/* One ball that travels: it rolls with the carrier and flies along passes and shots. */}
+      <g className="ball" style={{ transform: `translate(${cx(state.ball.pos.c) + (loose ? 0 : 9)}px, ${cy(state.ball.pos.r) + (loose ? 0 : 9)}px)` }}>
+        <BallIcon x={0} y={0} />
+      </g>
       {front.map((o, i) => <OverlayMark key={`f${i}`} o={o} />)}
       {shot && shot.path.length > 0 && (
         <polyline
