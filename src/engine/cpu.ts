@@ -1,5 +1,6 @@
 import { adjacent, canShootFrom, dist, inOwnHalf, opponent, progress } from './board';
-import { actionsFor, carrierOf, hasSafePass, oneTwoRuns, passOutcome, passTargets, resolveAction, shotOutcome } from './rules';
+import { MOVE_AND_SHOOT_ROLES, actionsFor, carrierOf, hasSafePass, legalMoves, oneTwoRuns, passLine, passOutcome, passTargets, resolveAction, shotOutcome } from './rules';
+import type { Piece } from './types';
 import type { Action, GameState, Side } from './types';
 
 /**
@@ -83,7 +84,8 @@ export function evaluate(s: GameState, side: Side): number {
   const theirs = s.pieces.filter((p) => p.side === opp);
 
   if (carrier && carrier.side === side) {
-    v += 500 + progress(side, carrier.pos.r) * 26;
+    const cp = progress(side, carrier.pos.r);
+    v += 500 + cp * ATTACK.carrierProgress + (cp >= 16 ? ATTACK.finalThird : 0) + (canShootFrom(side, carrier.pos) ? ATTACK.inZone : 0);
     if (canShootFrom(side, carrier.pos)) v += shotOutcome(s, carrier).outcome === 'goal' ? 1100 : 220;
     // Pressure on the carrier and options to keep the ball.
     const near = theirs.filter((q) => dist(q.pos, carrier.pos) <= 2).length;
@@ -96,6 +98,7 @@ export function evaluate(s: GameState, side: Side): number {
         if (safe >= 4) break;
       }
     v += safe * 14;
+    v += chanceValue(s, carrier);
   } else if (carrier) {
     v -= 500 + progress(opp, carrier.pos.r) * 22;
     if (canShootFrom(opp, carrier.pos)) v -= shotOutcome(s, carrier).outcome === 'goal' ? 1300 : 200;
@@ -117,11 +120,42 @@ export function evaluate(s: GameState, side: Side): number {
     if (progress(side, p.pos.r) < ballProg) goalSide++;
     if ((p.role === 'CB' || p.role === 'FB') && !inOwnHalf(side, p.pos)) v -= 15;
     if (carrier?.side === side && (p.role === 'FW' || p.role === 'WG' || p.role === 'AM' || p.role === 'MF')) {
-      v += progress(side, p.pos.r) * 4;
+      v += progress(side, p.pos.r) * ATTACK.runners;
       if (canShootFrom(side, p.pos)) v += 40;
     }
   }
   v += Math.min(goalSide, 6) * 12;
+  return v;
+}
+
+/** Tuning weights for attacking intent (exported for balance testing). */
+export const ATTACK = { openShooter: 320, reachGoal: 380, carrierProgress: 60, finalThird: 350, inZone: 500, runners: 8 };
+
+/**
+ * Goal chances the carrier's team has set up for next turn: a teammate standing
+ * where a shot would score that the carrier can reach with a safe pass, or a
+ * square the carrier itself can move to and score from. The opponent still gets
+ * a reply in between, so these are chances, not goals.
+ */
+function chanceValue(s: GameState, carrier: Piece): number {
+  const side = carrier.side;
+  let v = 0;
+  let open = 0;
+  for (const q of s.pieces) {
+    if (q.side !== side || q.id === carrier.id || q.role === 'GK' || !canShootFrom(side, q.pos)) continue;
+    if (shotOutcome(s, q).outcome !== 'goal') continue;
+    if (passLine(carrier.pos, q.pos) && passOutcome(s, carrier, q.pos).result === 'complete') open++;
+  }
+  v += Math.min(open, 2) * ATTACK.openShooter;
+  if (MOVE_AND_SHOOT_ROLES.has(carrier.role)) {
+    for (const to of legalMoves(s, carrier)) {
+      if (!canShootFrom(side, to)) continue;
+      if (shotOutcome(s, { ...carrier, pos: to }).outcome === 'goal') {
+        v += ATTACK.reachGoal;
+        break;
+      }
+    }
+  }
   return v;
 }
 
