@@ -28,6 +28,8 @@ import {
   type GameEvent,
   type GameState,
   type Side,
+  COLS,
+  ROWS,
 } from '../engine';
 import { Board, type Overlay } from './Board';
 import type { BoardTheme, Kit } from './themes';
@@ -227,8 +229,38 @@ export function MatchView({ state, onAction, humanSides, busy, theme, kits, bann
     setVia(null);
   };
 
-  const onCell = (cell: Cell) => {
+  // Could tapping this square do anything right now?
+  const actionable = (c: Cell): boolean => {
+    if (pendingCell && sameCell(pendingCell, c)) return true;
+    if (buildAction(c)) return true;
+    if (oneTwoMode && opts?.oneTwos.some((x) => sameCell(x.pos, c))) return true;
+    const p = pieceAt(state, c);
+    return !!p && p.side === state.turn && !forced;
+  };
+
+  // Squares are small on a phone (about 21 px), so a tap that lands just beside a
+  // piece or target snaps to the nearest square that can actually be used.
+  const snap = (cell: Cell, at?: { x: number; y: number }): Cell => {
+    if (!at || actionable(cell)) return cell;
+    let best: Cell | null = null;
+    let bestD = Infinity;
+    for (let dr = -1; dr <= 1; dr++)
+      for (let dc = -1; dc <= 1; dc++) {
+        const c = { c: cell.c + dc, r: cell.r + dr };
+        if ((dr === 0 && dc === 0) || c.c < 0 || c.c >= COLS || c.r < 0 || c.r >= ROWS || !actionable(c)) continue;
+        const d = (c.c + 0.5 - at.x) ** 2 + (c.r + 0.5 - at.y) ** 2;
+        if (d < bestD) {
+          bestD = d;
+          best = c;
+        }
+      }
+    // Only within about one square of the target's centre.
+    return best && bestD <= 1.1 ** 2 ? best : cell;
+  };
+
+  const onCell = (tapped: Cell, at?: { x: number; y: number }) => {
     if (!myTurn) return;
+    const cell = snap(tapped, at);
     setError(null);
     if (pending && pendingCell && sameCell(pendingCell, cell)) return commit(pending);
     const a = buildAction(cell);
@@ -377,38 +409,40 @@ export function MatchView({ state, onAction, humanSides, busy, theme, kits, bann
             </div>
           )}
 
-          {shown && (
-            <div className="preview">
-              <div className="eyebrow">{pending ? 'Confirm' : 'Preview'}</div>
-              {preview.length === 0 ? (
-                <p>No effect.</p>
-              ) : (
-                preview
-                  .filter((e) => e.kind !== 'kickoff')
-                  .slice(0, 3)
-                  .map((e, i) => (
-                    <p key={i} className={`ev ${EVENT_TONE[e.kind] ?? ''}`}>
-                      {e.text}
-                      {e.rule && <span className="law">{e.rule}</span>}
-                    </p>
-                  ))
-              )}
-              {pending && (
-                <div className="row">
-                  <button type="button" className="btn primary" onClick={() => commit(pending)}>Confirm</button>
-                  <button type="button" className="btn ghost" onClick={() => setPending(null)}>Cancel</button>
-                </div>
-              )}
-            </div>
-          )}
+          <div className="action-dock">
+            {shown && (
+              <div className="preview">
+                <div className="eyebrow">{pending ? 'Confirm' : 'Preview'}</div>
+                {preview.length === 0 ? (
+                  <p>No effect.</p>
+                ) : (
+                  preview
+                    .filter((e) => e.kind !== 'kickoff')
+                    .slice(0, 3)
+                    .map((e, i) => (
+                      <p key={i} className={`ev ${EVENT_TONE[e.kind] ?? ''}`}>
+                        {e.text}
+                        {e.rule && <span className="law">{e.rule}</span>}
+                      </p>
+                    ))
+                )}
+                {pending && (
+                  <div className="row">
+                    <button type="button" className="btn primary" onClick={() => commit(pending)}>Confirm</button>
+                    <button type="button" className="btn ghost" onClick={() => setPending(null)}>Cancel</button>
+                  </div>
+                )}
+              </div>
+            )}
 
-          {error && <p className="error">{error}</p>}
+            {error && <p className="error">{error}</p>}
 
-          {myTurn && !state.kickoffPending && (
-            <button type="button" className="btn end" onClick={() => commit({ type: 'endTurn' })}>
-              End turn
-            </button>
-          )}
+            {myTurn && !state.kickoffPending && (
+              <button type="button" className="btn end" onClick={() => commit({ type: 'endTurn' })}>
+                End turn
+              </button>
+            )}
+          </div>
 
           <div className="log">
             <div className="eyebrow">Match log</div>

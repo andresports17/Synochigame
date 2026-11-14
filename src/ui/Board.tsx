@@ -42,7 +42,7 @@ interface Props {
   kits: { home: Kit; away: Kit };
   selected?: string | null;
   overlays?: Overlay[];
-  onCell?: (c: Cell) => void;
+  onCell?: (c: Cell, at?: { x: number; y: number }) => void;
   onHover?: (c: Cell | null) => void;
   compact?: boolean;
   /** Offside line for the attacking side: the progress value of the last outfield defender. */
@@ -213,7 +213,8 @@ function OverlayMark({ o }: { o: Overlay }) {
 }
 
 export function Board({ state, theme, kits, selected, overlays = [], onCell, onHover, compact, offside, flagged = [], zone, shot, arrow }: Props) {
-  const toCell = (e: React.MouseEvent<SVGSVGElement>): Cell | null => {
+  // Board position of a pointer event, in cell units (fractional).
+  const toPoint = (e: React.MouseEvent<SVGSVGElement>): { x: number; y: number } | null => {
     const svg = e.currentTarget;
     const pt = svg.createSVGPoint();
     pt.x = e.clientX;
@@ -221,8 +222,13 @@ export function Board({ state, theme, kits, selected, overlays = [], onCell, onH
     const m = svg.getScreenCTM();
     if (!m) return null;
     const p = pt.matrixTransform(m.inverse());
-    const c = Math.floor((p.x - OX) / CELL);
-    const r = Math.floor((p.y - OY) / CELL);
+    return { x: (p.x - OX) / CELL, y: (p.y - OY) / CELL };
+  };
+  const toCell = (e: React.MouseEvent<SVGSVGElement>): Cell | null => {
+    const p = toPoint(e);
+    if (!p) return null;
+    const c = Math.floor(p.x);
+    const r = Math.floor(p.y);
     if (c < 0 || c >= COLS || r < 0 || r >= ROWS) return null;
     return { c, r };
   };
@@ -235,7 +241,7 @@ export function Board({ state, theme, kits, selected, overlays = [], onCell, onH
       viewBox={`0 0 ${BOARD_W} ${BOARD_H}`}
       role="img"
       aria-label="SYNOCHÍ board"
-      onClick={onCell ? (e) => { const c = toCell(e); if (c) onCell(c); } : undefined}
+      onClick={onCell ? (e) => { const c = toCell(e); if (c) onCell(c, toPoint(e) ?? undefined); } : undefined}
       onMouseMove={onHover ? (e) => onHover(toCell(e)) : undefined}
       onMouseLeave={onHover ? () => onHover(null) : undefined}
     >
